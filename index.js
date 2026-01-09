@@ -31,6 +31,13 @@ const extensionName = 'st-image-auto-generation';
 const extensionFolderPath = `/scripts/extensions/third-party/${extensionName}`;
 
 /**
+ * Global set to track processed messages and prevent infinite loops
+ * Uses messageIndex to uniquely identify messages that have already been processed
+ * This prevents re-processing messages even if events are triggered multiple times
+ */
+const processedMessages = new Set();
+
+/**
  * Image insertion type constants
  * - DISABLED: Extension is disabled, no image generation
  * - INLINE: Insert images into the message's extra array (supports image controls)
@@ -496,11 +503,14 @@ eventSource.on(event_types.MESSAGE_RECEIVED, function (messageId) {
  * @param {number} messageId - The index of the message in the chat array (optional)
  */
 async function handleIncomingMessage(messageId) {
+    console.log(`[${extensionName}] handleIncomingMessage called with messageId: ${messageId}`);
+
     // Ensure settings object exists and extension is not disabled
     if (
         !extension_settings[extensionName] ||
         extension_settings[extensionName].insertType === INSERT_TYPE.DISABLED
     ) {
+        console.log(`[${extensionName}] Extension disabled or settings not found, returning`);
         return;
     }
 
@@ -522,17 +532,19 @@ async function handleIncomingMessage(messageId) {
 
     // CRITICAL: Prevent infinite loops by checking if this message has already been processed
     // When we update a message (e.g., replace <pic> tags or add images), it can trigger
-    // new events that would cause this function to run again. We mark messages as processed
-    // to prevent re-processing them.
-    if (!message.extra) {
-        message.extra = {};
-    }
+    // new events that would cause this function to run again. We use a global Set to track
+    // processed messages using messageIndex (which is stable and doesn't change when content changes)
+    const messageIdentifier = `msg_${messageIndex}`;
 
-    // Check if message has already been processed by this extension
-    if (message.extra[`${extensionName}_processed`]) {
-        console.log(`[${extensionName}] Message ${messageIndex} already processed, skipping to prevent infinite loop`);
+    // Check if this message is currently being processed or has already been processed
+    if (processedMessages.has(messageIdentifier)) {
+        console.log(`[${extensionName}] Message ${messageIndex} already being processed, skipping to prevent infinite loop`);
         return;
     }
+
+    // Mark as processed IMMEDIATELY, before any processing
+    processedMessages.add(messageIdentifier);
+    console.log(`[${extensionName}] Processing message ${messageIndex}`);
 
     // Ensure promptInjection object and regex property exist
     if (
@@ -593,24 +605,15 @@ async function handleIncomingMessage(messageId) {
     console.log(`[${extensionName}] Found ${matches.length} matches:`, matches);
 
     if (matches.length > 0) {
-        // CRITICAL: Mark message as processed IMMEDIATELY to prevent infinite loops
-        // This must be done before any async operations that might trigger new events
-        // When we update a message (e.g., replace <pic> tags or add images), it can trigger
-        // new events that would cause this function to run again. We mark messages as processed
-        // to prevent re-processing them.
-        if (!message.extra) {
-            message.extra = {};
-        }
-        message.extra[`${extensionName}_processed`] = true;
-
         // Delay image generation to ensure the message is displayed first
         // This prevents blocking the UI rendering
+        // Note: Message is already marked as processed above to prevent infinite loops
         setTimeout(async () => {
             try {
                 toastr.info(`Generating ${matches.length} images...`);
                 const insertType = extension_settings[extensionName].insertType;
 
-                // Initialize message.extra for image insertion (already initialized above, but ensure it exists)
+                // Initialize message.extra for image insertion
                 if (!message.extra) {
                     message.extra = {};
                 }
@@ -733,6 +736,8 @@ async function handleIncomingMessage(messageId) {
                             );
 
                             // Update the message display using updateMessageBlock
+                            // Note: This might trigger CHARACTER_MESSAGE_RENDERED event, but our
+                            // processedMessages Set will prevent re-processing
                             updateMessageBlock(
                                 messageIndex,
                                 message,

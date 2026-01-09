@@ -589,6 +589,41 @@ eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
 });
 
 /**
+ * Listens for image swipe changes to update the title (prompt) when user swipes between images
+ * When user swipes, SillyTavern updates message.extra.image, and we need to update message.extra.title
+ * to match the current image from the image_titles array
+ */
+eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
+    const context = getContext();
+    const message = context.chat[messageId];
+
+    // Only process if message has image_swipes and image_titles
+    if (!message || !message.extra || !Array.isArray(message.extra.image_swipes) || !Array.isArray(message.extra.image_titles)) {
+        return;
+    }
+
+    // Check if image_swipes and image_titles are parallel (same length)
+    if (message.extra.image_swipes.length !== message.extra.image_titles.length) {
+        console.warn(`[${extensionName}] image_swipes and image_titles arrays are not parallel for message ${messageId}`);
+        return;
+    }
+
+    // If message.extra.image is set, find its index in image_swipes and update title from image_titles
+    if (message.extra.image && message.extra.image_swipes.length > 0) {
+        const currentImageIndex = message.extra.image_swipes.indexOf(message.extra.image);
+        if (currentImageIndex >= 0 && currentImageIndex < message.extra.image_titles.length) {
+            const titleForCurrentImage = message.extra.image_titles[currentImageIndex] || '';
+            if (message.extra.title !== titleForCurrentImage) {
+                message.extra.title = titleForCurrentImage;
+                console.log(`[${extensionName}] Updated title after swipe to image ${currentImageIndex}: ${titleForCurrentImage.substring(0, 50)}...`);
+                // Save the change
+                context.saveChat();
+            }
+        }
+    }
+});
+
+/**
  * Handles incoming messages and generates images when <pic> tags are detected
  * Can process both AI messages and user messages (if processUserMessages is enabled)
  *
@@ -714,6 +749,11 @@ async function handleIncomingMessage(messageId) {
                 if (!Array.isArray(message.extra.image_swipes)) {
                     message.extra.image_swipes = [];
                 }
+                // Initialize image_titles array to store prompts for each image in image_swipes
+                // This array must be parallel to image_swipes (same index = same image)
+                if (!Array.isArray(message.extra.image_titles)) {
+                    message.extra.image_titles = [];
+                }
 
                 // CRITICAL: If there's already an image, ensure it's in the swipes array
                 // This is required for swipe functionality to work - SillyTavern needs at least 2 items in image_swipes
@@ -722,6 +762,12 @@ async function handleIncomingMessage(messageId) {
                     if (!message.extra.image_swipes.includes(message.extra.image)) {
                         // Add existing image to the beginning of the array to preserve order
                         message.extra.image_swipes.unshift(message.extra.image);
+                        // Also add the existing title to image_titles at the same index
+                        if (message.extra.title) {
+                            message.extra.image_titles.unshift(message.extra.title);
+                        } else {
+                            message.extra.image_titles.unshift('');
+                        }
                     }
                 }
 
@@ -783,10 +829,17 @@ async function handleIncomingMessage(messageId) {
                     // Insert images based on the selected insertion type
                     if (insertType === INSERT_TYPE.INLINE) {
                         // INLINE mode: Insert images into message.extra array (supports image controls)
-                        // Add all images to swipes array
+                        // Add all images to swipes array and store their prompts in image_titles array
+                        // image_titles must be parallel to image_swipes (same index = same image)
                         for (const img of generatedImages) {
-                            if (!message.extra.image_swipes.includes(img.url)) {
+                            const existingIndex = message.extra.image_swipes.indexOf(img.url);
+                            if (existingIndex === -1) {
+                                // Image not in swipes yet, add it
                                 message.extra.image_swipes.push(img.url);
+                                message.extra.image_titles.push(img.prompt);
+                            } else {
+                                // Image already exists, update its prompt in image_titles
+                                message.extra.image_titles[existingIndex] = img.prompt;
                             }
                         }
 
@@ -807,20 +860,20 @@ async function handleIncomingMessage(messageId) {
                             const currentImageIndex = message.extra.image_swipes.indexOf(message.extra.image);
                             if (currentImageIndex > 0) {
                                 // Move current image to the front
-                                message.extra.image_swipes.splice(currentImageIndex, 1);
-                                message.extra.image_swipes.unshift(message.extra.image);
-                                // Update title to match the moved image
-                                const movedImageData = generatedImages.find(img => img.url === message.extra.image);
-                                if (movedImageData) {
-                                    message.extra.title = movedImageData.prompt;
-                                    console.log(`[${extensionName}] Updated title after moving image to front: ${movedImageData.prompt.substring(0, 50)}...`);
-                                }
+                                const imageUrl = message.extra.image_swipes.splice(currentImageIndex, 1)[0];
+                                message.extra.image_swipes.unshift(imageUrl);
+                                // Also move the corresponding title to maintain parallel arrays
+                                const imageTitle = message.extra.image_titles.splice(currentImageIndex, 1)[0];
+                                message.extra.image_titles.unshift(imageTitle);
+                                // Update message.extra.title to match the moved image
+                                message.extra.title = imageTitle;
+                                console.log(`[${extensionName}] Moved image to front and updated title: ${imageTitle.substring(0, 50)}...`);
                             } else if (currentImageIndex === 0) {
                                 // Image is already first, but ensure title matches
-                                const currentImageData = generatedImages.find(img => img.url === message.extra.image);
-                                if (currentImageData && message.extra.title !== currentImageData.prompt) {
-                                    message.extra.title = currentImageData.prompt;
-                                    console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                const titleFromArray = message.extra.image_titles[0] || '';
+                                if (message.extra.title !== titleFromArray) {
+                                    message.extra.title = titleFromArray;
+                                    console.log(`[${extensionName}] Updated title to match current image: ${titleFromArray.substring(0, 50)}...`);
                                 }
                             }
                         }
@@ -828,23 +881,21 @@ async function handleIncomingMessage(messageId) {
 
                         // CRITICAL: Ensure message.extra.image matches the first item in image_swipes
                         // This is required for SillyTavern's swipe functionality to work correctly
-                        // Also update the title (prompt) to match the current image
+                        // Also update the title (prompt) to match the current image from image_titles array
                         if (message.extra.image_swipes.length > 0) {
                             const firstImageUrl = message.extra.image_swipes[0];
                             if (message.extra.image !== firstImageUrl) {
                                 message.extra.image = firstImageUrl;
-                                // Find and update the prompt for the current image
-                                const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
-                                if (currentImageData) {
-                                    message.extra.title = currentImageData.prompt;
-                                    console.log(`[${extensionName}] Updated image and title: ${currentImageData.prompt.substring(0, 50)}...`);
-                                }
+                                // Get the prompt from image_titles array (parallel to image_swipes)
+                                const firstImageTitle = message.extra.image_titles[0] || '';
+                                message.extra.title = firstImageTitle;
+                                console.log(`[${extensionName}] Updated image and title from array: ${firstImageTitle.substring(0, 50)}...`);
                             } else {
-                                // Even if image matches, ensure title is correct
-                                const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
-                                if (currentImageData && message.extra.title !== currentImageData.prompt) {
-                                    message.extra.title = currentImageData.prompt;
-                                    console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                // Even if image matches, ensure title is correct from image_titles array
+                                const firstImageTitle = message.extra.image_titles[0] || '';
+                                if (message.extra.title !== firstImageTitle) {
+                                    message.extra.title = firstImageTitle;
+                                    console.log(`[${extensionName}] Updated title to match current image from array: ${firstImageTitle.substring(0, 50)}...`);
                                 }
                             }
                         }
@@ -978,11 +1029,22 @@ async function handleIncomingMessage(messageId) {
                                 if (!Array.isArray(message.extra.image_swipes)) {
                                     message.extra.image_swipes = [];
                                 }
+                                // Initialize image_titles array to store prompts for each image in image_swipes
+                                if (!Array.isArray(message.extra.image_titles)) {
+                                    message.extra.image_titles = [];
+                                }
 
-                                // Add all images to swipes array
+                                // Add all images to swipes array and store their prompts in image_titles array
+                                // image_titles must be parallel to image_swipes (same index = same image)
                                 for (const img of generatedImages) {
-                                    if (!message.extra.image_swipes.includes(img.url)) {
+                                    const existingIndex = message.extra.image_swipes.indexOf(img.url);
+                                    if (existingIndex === -1) {
+                                        // Image not in swipes yet, add it
                                         message.extra.image_swipes.push(img.url);
+                                        message.extra.image_titles.push(img.prompt);
+                                    } else {
+                                        // Image already exists, update its prompt in image_titles
+                                        message.extra.image_titles[existingIndex] = img.prompt;
                                     }
                                 }
 
@@ -1003,20 +1065,20 @@ async function handleIncomingMessage(messageId) {
                                     const currentImageIndex = message.extra.image_swipes.indexOf(message.extra.image);
                                     if (currentImageIndex > 0) {
                                         // Move current image to the front
-                                        message.extra.image_swipes.splice(currentImageIndex, 1);
-                                        message.extra.image_swipes.unshift(message.extra.image);
-                                        // Update title to match the moved image
-                                        const movedImageData = generatedImages.find(img => img.url === message.extra.image);
-                                        if (movedImageData) {
-                                            message.extra.title = movedImageData.prompt;
-                                            console.log(`[${extensionName}] Updated title after moving image to front: ${movedImageData.prompt.substring(0, 50)}...`);
-                                        }
+                                        const imageUrl = message.extra.image_swipes.splice(currentImageIndex, 1)[0];
+                                        message.extra.image_swipes.unshift(imageUrl);
+                                        // Also move the corresponding title to maintain parallel arrays
+                                        const imageTitle = message.extra.image_titles.splice(currentImageIndex, 1)[0];
+                                        message.extra.image_titles.unshift(imageTitle);
+                                        // Update message.extra.title to match the moved image
+                                        message.extra.title = imageTitle;
+                                        console.log(`[${extensionName}] Moved image to front and updated title: ${imageTitle.substring(0, 50)}...`);
                                     } else if (currentImageIndex === 0) {
                                         // Image is already first, but ensure title matches
-                                        const currentImageData = generatedImages.find(img => img.url === message.extra.image);
-                                        if (currentImageData && message.extra.title !== currentImageData.prompt) {
-                                            message.extra.title = currentImageData.prompt;
-                                            console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                        const titleFromArray = message.extra.image_titles[0] || '';
+                                        if (message.extra.title !== titleFromArray) {
+                                            message.extra.title = titleFromArray;
+                                            console.log(`[${extensionName}] Updated title to match current image: ${titleFromArray.substring(0, 50)}...`);
                                         }
                                     }
                                 }
@@ -1025,23 +1087,21 @@ async function handleIncomingMessage(messageId) {
                                 // CRITICAL: Ensure message.extra.image matches the first item in image_swipes
                                 // This is required for SillyTavern's swipe functionality to work correctly
                                 // SillyTavern checks if image_swipes.length > 1 and if message.extra.image matches the first item
-                                // Also update the title (prompt) to match the current image
+                                // Also update the title (prompt) to match the current image from image_titles array
                                 if (message.extra.image_swipes.length > 0) {
                                     const firstImageUrl = message.extra.image_swipes[0];
                                     if (message.extra.image !== firstImageUrl) {
                                         message.extra.image = firstImageUrl;
-                                        // Find and update the prompt for the current image
-                                        const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
-                                        if (currentImageData) {
-                                            message.extra.title = currentImageData.prompt;
-                                            console.log(`[${extensionName}] Updated image and title: ${currentImageData.prompt.substring(0, 50)}...`);
-                                        }
+                                        // Get the prompt from image_titles array (parallel to image_swipes)
+                                        const firstImageTitle = message.extra.image_titles[0] || '';
+                                        message.extra.title = firstImageTitle;
+                                        console.log(`[${extensionName}] Updated image and title from array: ${firstImageTitle.substring(0, 50)}...`);
                                     } else {
-                                        // Even if image matches, ensure title is correct
-                                        const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
-                                        if (currentImageData && message.extra.title !== currentImageData.prompt) {
-                                            message.extra.title = currentImageData.prompt;
-                                            console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                        // Even if image matches, ensure title is correct from image_titles array
+                                        const firstImageTitle = message.extra.image_titles[0] || '';
+                                        if (message.extra.title !== firstImageTitle) {
+                                            message.extra.title = firstImageTitle;
+                                            console.log(`[${extensionName}] Updated title to match current image from array: ${firstImageTitle.substring(0, 50)}...`);
                                         }
                                     }
                                 }

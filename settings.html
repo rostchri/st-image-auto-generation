@@ -67,6 +67,15 @@
             <small data-i18n="When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration. When disabled, uses simple &lt;img&gt; tags. Default: enabled.">When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration. When disabled, uses simple &lt;img&gt; tags. Default: enabled.</small>
         </div>
         <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="use_multiple_image_views">
+                <span data-i18n="Use Multiple Image Viewers">Use Multiple Image Viewers</span>
+                <input type="checkbox" id="use_multiple_image_views" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, each &lt;pic&gt; tag gets its own separate image viewer at that position in the text. When disabled, all images are collected into a single image viewer. Note: Multiple viewers use inline images (click to open), not full SillyTavern image viewer features. Default: disabled.">When enabled, each &lt;pic&gt; tag gets its own separate image viewer at that position in the text. When disabled, all images are collected into a single image viewer. Note: Multiple viewers use inline images (click to open), not full SillyTavern image viewer features. Default: disabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
             <label class="checkbox_label" for="process_edited_messages">
                 <span data-i18n="Process Edited Messages">Process Edited Messages</span>
                 <input type="checkbox" id="process_edited_messages" class="checkbox">

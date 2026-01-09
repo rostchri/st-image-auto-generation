@@ -101,6 +101,11 @@ const defaultSettings = {
     // When enabled, images use the full image viewer with zoom, prompt display, and seed regeneration
     // When disabled, images are inserted as simple <img> tags in the message text
     replaceModeUseImageViewer: true,
+    // Whether to use multiple separate image viewers (one per <pic> tag) instead of one combined viewer (disabled by default)
+    // When enabled, each <pic> tag is replaced by its own image viewer at that position in the text
+    // When disabled, all images are collected into a single image viewer (current behavior)
+    // Note: Multiple viewers may have compatibility issues with some SillyTavern features
+    useMultipleImageViews: false,
     // Whether to process <pic> tags when messages are edited (enabled by default)
     // When enabled, adding <pic> tags to existing messages via edit will trigger image generation
     processEditedMessages: true,
@@ -168,6 +173,10 @@ function updateUI() {
             'checked',
             extension_settings[extensionName].replaceModeUseImageViewer !== false, // Default to true
         );
+        $('#use_multiple_image_views').prop(
+            'checked',
+            extension_settings[extensionName].useMultipleImageViews || false, // Default to false
+        );
         $('#process_edited_messages').prop(
             'checked',
             extension_settings[extensionName].processEditedMessages !== false, // Default to true
@@ -229,6 +238,12 @@ async function loadSettings() {
         if (extension_settings[extensionName].replaceModeUseImageViewer === undefined) {
             extension_settings[extensionName].replaceModeUseImageViewer =
                 defaultSettings.replaceModeUseImageViewer;
+        }
+
+        // Ensure useMultipleImageViews property exists
+        if (extension_settings[extensionName].useMultipleImageViews === undefined) {
+            extension_settings[extensionName].useMultipleImageViews =
+                defaultSettings.useMultipleImageViews;
         }
 
         // Ensure processEditedMessages property exists
@@ -327,6 +342,15 @@ async function createSettings(settingsHtml) {
     // When disabled, REPLACE mode uses simple <img> tags
     $('#replace_mode_use_image_viewer').on('change', function () {
         extension_settings[extensionName].replaceModeUseImageViewer =
+            $(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    // Use multiple image views checkbox
+    // When enabled, each <pic> tag gets its own separate image viewer at that position
+    // When disabled, all images are collected into a single image viewer
+    $('#use_multiple_image_views').on('change', function () {
+        extension_settings[extensionName].useMultipleImageViews =
             $(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -783,70 +807,112 @@ async function handleIncomingMessage(messageId) {
 
                         // Check if image viewer should be used in REPLACE mode
                         const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
+                        // Check if multiple separate image viewers should be used
+                        const useMultipleViews = extension_settings[extensionName].useMultipleImageViews === true;
 
                         if (useImageViewer) {
-                            // Use SillyTavern's image viewer: Remove all <pic> tags and add images to message.extra
-                            // This provides zoom, prompt display, and seed regeneration features
+                            if (useMultipleViews && generatedImages.length > 1) {
+                                // Use multiple separate image viewers: Replace each <pic> tag with an inline image viewer
+                                // Each image gets its own viewer at the position of the original tag
+                                for (const img of generatedImages) {
+                                    const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
+                                    if (!originalTag) {
+                                        continue;
+                                    }
 
-                            // Remove all <pic> tags from the message text
-                            for (const img of generatedImages) {
-                                const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
-                                if (!originalTag) {
-                                    continue;
+                                    // If regex transformations are enabled, we need to find the tag in the regex-transformed message
+                                    let tagToReplace = originalTag;
+
+                                    if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                        const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                        const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                        const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+
+                                        const regexedMes = getRegexedString(message.mes, regexPlacement, {
+                                            characterOverride: message.name,
+                                            isMarkdown: false,
+                                            depth: depth,
+                                        });
+
+                                        tagToReplace = regexedMes.includes(originalTag)
+                                            ? originalTag
+                                            : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+                                    }
+
+                                    // Replace the tag with a special placeholder that will be converted to an image viewer
+                                    // We use a data attribute to store the image URL and prompt
+                                    const escapedUrl = escapeHtmlAttribute(img.url);
+                                    const escapedPrompt = escapeHtmlAttribute(img.prompt);
+                                    // Use a div with data attributes that can be processed by JavaScript to create image viewers
+                                    // This allows multiple viewers in one message
+                                    const imageViewerPlaceholder = `<div class="inline-image-viewer" data-image-url="${escapedUrl}" data-prompt="${escapedPrompt}" style="display: inline-block; margin: 4px;"><img src="${escapedUrl}" alt="${escapedPrompt}" title="${escapedPrompt}" style="max-width: 300px; max-height: 300px; cursor: pointer; border-radius: 4px;" onclick="window.open('${escapedUrl}', '_blank')"></div>`;
+
+                                    message.mes = message.mes.replace(tagToReplace, imageViewerPlaceholder);
+                                }
+                            } else {
+                                // Use single combined image viewer: Remove all <pic> tags and add images to message.extra
+                                // This provides zoom, prompt display, and seed regeneration features
+
+                                // Remove all <pic> tags from the message text
+                                for (const img of generatedImages) {
+                                    const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
+                                    if (!originalTag) {
+                                        continue;
+                                    }
+
+                                    // If regex transformations are enabled, we need to find the tag in the regex-transformed message
+                                    let tagToReplace = originalTag;
+
+                                    if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                        const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                        const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                        const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+
+                                        const regexedMes = getRegexedString(message.mes, regexPlacement, {
+                                            characterOverride: message.name,
+                                            isMarkdown: false,
+                                            depth: depth,
+                                        });
+
+                                        tagToReplace = regexedMes.includes(originalTag)
+                                            ? originalTag
+                                            : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+                                    }
+
+                                    message.mes = message.mes.replace(tagToReplace, '');
                                 }
 
-                                // If regex transformations are enabled, we need to find the tag in the regex-transformed message
-                                let tagToReplace = originalTag;
-
-                                if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
-                                    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-                                    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
-                                    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
-
-                                    const regexedMes = getRegexedString(message.mes, regexPlacement, {
-                                        characterOverride: message.name,
-                                        isMarkdown: false,
-                                        depth: depth,
-                                    });
-
-                                    tagToReplace = regexedMes.includes(originalTag)
-                                        ? originalTag
-                                        : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+                                // Add all images to message.extra to use SillyTavern's image viewer
+                                if (!message.extra) {
+                                    message.extra = {};
+                                }
+                                if (!Array.isArray(message.extra.image_swipes)) {
+                                    message.extra.image_swipes = [];
                                 }
 
-                                message.mes = message.mes.replace(tagToReplace, '');
-                            }
-
-                            // Add all images to message.extra to use SillyTavern's image viewer
-                            if (!message.extra) {
-                                message.extra = {};
-                            }
-                            if (!Array.isArray(message.extra.image_swipes)) {
-                                message.extra.image_swipes = [];
-                            }
-
-                            // Add all images to swipes array
-                            for (const img of generatedImages) {
-                                if (!message.extra.image_swipes.includes(img.url)) {
-                                    message.extra.image_swipes.push(img.url);
+                                // Add all images to swipes array
+                                for (const img of generatedImages) {
+                                    if (!message.extra.image_swipes.includes(img.url)) {
+                                        message.extra.image_swipes.push(img.url);
+                                    }
                                 }
-                            }
 
-                            // Set the first image as the main image (only if not already set)
-                            if (!message.extra.image && generatedImages.length > 0) {
-                                message.extra.image = generatedImages[0].url;
-                                message.extra.title = generatedImages[0].prompt;
+                                // Set the first image as the main image (only if not already set)
+                                if (!message.extra.image && generatedImages.length > 0) {
+                                    message.extra.image = generatedImages[0].url;
+                                    message.extra.title = generatedImages[0].prompt;
+                                }
+                                message.extra.inline_image = true;
+
+                                // Update the UI to display all images with the image viewer (only once)
+                                appendMediaToMessage(message, messageElement);
                             }
-                            message.extra.inline_image = true;
 
                             // Update the message display using updateMessageBlock (only once)
                             updateMessageBlock(
                                 messageIndex,
                                 message,
                             );
-
-                            // Update the UI to display all images with the image viewer (only once)
-                            appendMediaToMessage(message, messageElement);
                         } else {
                             // Use simple <img> tags: Replace each <pic> tag with an <img> tag
                             for (const img of generatedImages) {

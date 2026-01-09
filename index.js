@@ -101,6 +101,9 @@ const defaultSettings = {
     // When enabled, images use the full image viewer with zoom, prompt display, and seed regeneration
     // When disabled, images are inserted as simple <img> tags in the message text
     replaceModeUseImageViewer: true,
+    // Whether to process <pic> tags when messages are edited (enabled by default)
+    // When enabled, adding <pic> tags to existing messages via edit will trigger image generation
+    processEditedMessages: true,
     // Prompt injection configuration
     promptInjection: {
         // Whether prompt injection is enabled
@@ -165,6 +168,10 @@ function updateUI() {
             'checked',
             extension_settings[extensionName].replaceModeUseImageViewer !== false, // Default to true
         );
+        $('#process_edited_messages').prop(
+            'checked',
+            extension_settings[extensionName].processEditedMessages !== false, // Default to true
+        );
     }
 }
 
@@ -222,6 +229,12 @@ async function loadSettings() {
         if (extension_settings[extensionName].replaceModeUseImageViewer === undefined) {
             extension_settings[extensionName].replaceModeUseImageViewer =
                 defaultSettings.replaceModeUseImageViewer;
+        }
+
+        // Ensure processEditedMessages property exists
+        if (extension_settings[extensionName].processEditedMessages === undefined) {
+            extension_settings[extensionName].processEditedMessages =
+                defaultSettings.processEditedMessages;
         }
     }
 
@@ -314,6 +327,14 @@ async function createSettings(settingsHtml) {
     // When disabled, REPLACE mode uses simple <img> tags
     $('#replace_mode_use_image_viewer').on('change', function () {
         extension_settings[extensionName].replaceModeUseImageViewer =
+            $(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    // Process edited messages checkbox
+    // When enabled, adding <pic> tags to existing messages via edit will trigger image generation
+    $('#process_edited_messages').on('change', function () {
+        extension_settings[extensionName].processEditedMessages =
             $(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -516,6 +537,30 @@ eventSource.on(event_types.MESSAGE_RECEIVED, function (messageId) {
         setTimeout(() => {
             handleIncomingMessage(messageId);
         }, 100);
+    }
+});
+
+/**
+ * Listens for MESSAGE_UPDATED event to process edited messages (if enabled)
+ * This allows processing <pic> tags when users edit existing messages and add <pic> tags
+ * The messageIdentifier is cleared when a message is updated to allow re-processing
+ */
+eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
+    // Only process if edited message processing is enabled
+    if (
+        extension_settings[extensionName] &&
+        extension_settings[extensionName].processEditedMessages &&
+        extension_settings[extensionName].insertType !== INSERT_TYPE.DISABLED
+    ) {
+        // Clear the processed flag for this message to allow re-processing after edit
+        // This is safe because the message content has changed, so we want to check it again
+        const messageIdentifier = `msg_${messageId}`;
+        processedMessages.delete(messageIdentifier);
+
+        // Use a small delay to ensure the message is fully updated
+        setTimeout(() => {
+            handleIncomingMessage(messageId);
+        }, 200);
     }
 });
 

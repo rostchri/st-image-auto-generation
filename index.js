@@ -715,12 +715,14 @@ async function handleIncomingMessage(messageId) {
                     message.extra.image_swipes = [];
                 }
 
-                // If there's already an image, add it to swipes
-                if (
-                    message.extra.image &&
-                    !message.extra.image_swipes.includes(message.extra.image)
-                ) {
-                    message.extra.image_swipes.push(message.extra.image);
+                // CRITICAL: If there's already an image, ensure it's in the swipes array
+                // This is required for swipe functionality to work - SillyTavern needs at least 2 items in image_swipes
+                // If message.extra.image exists but is not in image_swipes, add it first
+                if (message.extra.image) {
+                    if (!message.extra.image_swipes.includes(message.extra.image)) {
+                        // Add existing image to the beginning of the array to preserve order
+                        message.extra.image_swipes.unshift(message.extra.image);
+                    }
                 }
 
                 // Get the message element for later UI updates
@@ -788,12 +790,64 @@ async function handleIncomingMessage(messageId) {
                             }
                         }
 
-                        // Set the first image as the main image (only if not already set)
-                        if (!message.extra.image && generatedImages.length > 0) {
-                            message.extra.image = generatedImages[0].url;
-                            message.extra.title = generatedImages[0].prompt;
+                        // CRITICAL: Ensure message.extra.image is set and is in image_swipes
+                        // This is required for swipe functionality - SillyTavern needs message.extra.image
+                        // to match the first item in image_swipes for proper swipe behavior
+                        if (message.extra.image_swipes.length > 0) {
+                            // If message.extra.image is not set, use the first image
+                            if (!message.extra.image) {
+                                message.extra.image = message.extra.image_swipes[0];
+                                const firstImageData = generatedImages.find(img => img.url === message.extra.image_swipes[0]);
+                                if (firstImageData) {
+                                    message.extra.title = firstImageData.prompt;
+                                }
+                            }
+                            // Ensure message.extra.image is the first item in image_swipes
+                            // This is important for swipe functionality
+                            const currentImageIndex = message.extra.image_swipes.indexOf(message.extra.image);
+                            if (currentImageIndex > 0) {
+                                // Move current image to the front
+                                message.extra.image_swipes.splice(currentImageIndex, 1);
+                                message.extra.image_swipes.unshift(message.extra.image);
+                                // Update title to match the moved image
+                                const movedImageData = generatedImages.find(img => img.url === message.extra.image);
+                                if (movedImageData) {
+                                    message.extra.title = movedImageData.prompt;
+                                    console.log(`[${extensionName}] Updated title after moving image to front: ${movedImageData.prompt.substring(0, 50)}...`);
+                                }
+                            } else if (currentImageIndex === 0) {
+                                // Image is already first, but ensure title matches
+                                const currentImageData = generatedImages.find(img => img.url === message.extra.image);
+                                if (currentImageData && message.extra.title !== currentImageData.prompt) {
+                                    message.extra.title = currentImageData.prompt;
+                                    console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                }
+                            }
                         }
                         message.extra.inline_image = true;
+
+                        // CRITICAL: Ensure message.extra.image matches the first item in image_swipes
+                        // This is required for SillyTavern's swipe functionality to work correctly
+                        // Also update the title (prompt) to match the current image
+                        if (message.extra.image_swipes.length > 0) {
+                            const firstImageUrl = message.extra.image_swipes[0];
+                            if (message.extra.image !== firstImageUrl) {
+                                message.extra.image = firstImageUrl;
+                                // Find and update the prompt for the current image
+                                const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
+                                if (currentImageData) {
+                                    message.extra.title = currentImageData.prompt;
+                                    console.log(`[${extensionName}] Updated image and title: ${currentImageData.prompt.substring(0, 50)}...`);
+                                }
+                            } else {
+                                // Even if image matches, ensure title is correct
+                                const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
+                                if (currentImageData && message.extra.title !== currentImageData.prompt) {
+                                    message.extra.title = currentImageData.prompt;
+                                    console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                }
+                            }
+                        }
 
                         // Update the UI to display all images at once
                         appendMediaToMessage(message, messageElement);
@@ -897,12 +951,65 @@ async function handleIncomingMessage(messageId) {
                                     }
                                 }
 
-                                // Set the first image as the main image (only if not already set)
-                                if (!message.extra.image && generatedImages.length > 0) {
-                                    message.extra.image = generatedImages[0].url;
-                                    message.extra.title = generatedImages[0].prompt;
+                                // CRITICAL: Ensure message.extra.image is set and is in image_swipes
+                                // This is required for swipe functionality - SillyTavern needs message.extra.image
+                                // to match the first item in image_swipes for proper swipe behavior
+                                if (message.extra.image_swipes.length > 0) {
+                                    // If message.extra.image is not set, use the first image
+                                    if (!message.extra.image) {
+                                        message.extra.image = message.extra.image_swipes[0];
+                                        const firstImageData = generatedImages.find(img => img.url === message.extra.image_swipes[0]);
+                                        if (firstImageData) {
+                                            message.extra.title = firstImageData.prompt;
+                                        }
+                                    }
+                                    // Ensure message.extra.image is the first item in image_swipes
+                                    // This is important for swipe functionality
+                                    const currentImageIndex = message.extra.image_swipes.indexOf(message.extra.image);
+                                    if (currentImageIndex > 0) {
+                                        // Move current image to the front
+                                        message.extra.image_swipes.splice(currentImageIndex, 1);
+                                        message.extra.image_swipes.unshift(message.extra.image);
+                                        // Update title to match the moved image
+                                        const movedImageData = generatedImages.find(img => img.url === message.extra.image);
+                                        if (movedImageData) {
+                                            message.extra.title = movedImageData.prompt;
+                                            console.log(`[${extensionName}] Updated title after moving image to front: ${movedImageData.prompt.substring(0, 50)}...`);
+                                        }
+                                    } else if (currentImageIndex === 0) {
+                                        // Image is already first, but ensure title matches
+                                        const currentImageData = generatedImages.find(img => img.url === message.extra.image);
+                                        if (currentImageData && message.extra.title !== currentImageData.prompt) {
+                                            message.extra.title = currentImageData.prompt;
+                                            console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                        }
+                                    }
                                 }
                                 message.extra.inline_image = true;
+
+                                // CRITICAL: Ensure message.extra.image matches the first item in image_swipes
+                                // This is required for SillyTavern's swipe functionality to work correctly
+                                // SillyTavern checks if image_swipes.length > 1 and if message.extra.image matches the first item
+                                // Also update the title (prompt) to match the current image
+                                if (message.extra.image_swipes.length > 0) {
+                                    const firstImageUrl = message.extra.image_swipes[0];
+                                    if (message.extra.image !== firstImageUrl) {
+                                        message.extra.image = firstImageUrl;
+                                        // Find and update the prompt for the current image
+                                        const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
+                                        if (currentImageData) {
+                                            message.extra.title = currentImageData.prompt;
+                                            console.log(`[${extensionName}] Updated image and title: ${currentImageData.prompt.substring(0, 50)}...`);
+                                        }
+                                    } else {
+                                        // Even if image matches, ensure title is correct
+                                        const currentImageData = generatedImages.find(img => img.url === firstImageUrl);
+                                        if (currentImageData && message.extra.title !== currentImageData.prompt) {
+                                            message.extra.title = currentImageData.prompt;
+                                            console.log(`[${extensionName}] Updated title to match current image: ${currentImageData.prompt.substring(0, 50)}...`);
+                                        }
+                                    }
+                                }
 
                                 // Update the UI to display all images with the image viewer (only once)
                                 appendMediaToMessage(message, messageElement);

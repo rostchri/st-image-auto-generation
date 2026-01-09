@@ -1,9 +1,15 @@
-// The main script for the extension
-// The following are examples of some basic extension functionality
+/**
+ * SillyTavern Image Auto Generation Extension
+ *
+ * This extension automatically generates images when it detects <pic prompt="..."> tags in AI messages.
+ * It injects a prompt instruction into the chat completion to encourage the AI to include image tags,
+ * then processes incoming messages to detect these tags and trigger image generation.
+ */
 
-//You'll likely need to import extension_settings, getContext, and loadExtensionSettings from extensions.js
+// Import extension settings and context management
 import { extension_settings, getContext } from '../../../extensions.js';
-//You'll likely need to import some other functions from the main script
+
+// Import core SillyTavern functions
 import {
     saveSettingsDebounced,
     eventSource,
@@ -14,12 +20,23 @@ import { appendMediaToMessage } from '../../../../script.js';
 import { regexFromString } from '../../../utils.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 
-// 扩展名称和路径
+// Import regex engine functions to apply regex transformations before searching for tags
+// This is necessary because SillyTavern applies regex transformations to messages,
+// and we need to search in the transformed message, not the raw one
+import { getRegexedString, regex_placement } from '../../../extensions/regex/engine.js';
+
+// Extension name and folder path
 const extensionName = 'st-image-auto-generation';
-// /scripts/extensions/third-party
+// Path to the extension folder: /scripts/extensions/third-party/st-image-auto-generation
 const extensionFolderPath = `/scripts/extensions/third-party/${extensionName}`;
 
-// 插入类型常量
+/**
+ * Image insertion type constants
+ * - DISABLED: Extension is disabled, no image generation
+ * - INLINE: Insert images into the message's extra array (supports image controls)
+ * - NEW_MESSAGE: Create new messages with generated images (default ST method, best compatibility)
+ * - REPLACE: Replace the <pic> tag directly with an <img> tag in the message text
+ */
 const INSERT_TYPE = {
     DISABLED: 'disabled',
     INLINE: 'inline',
@@ -29,8 +46,10 @@ const INSERT_TYPE = {
 
 /**
  * Escapes characters for safe inclusion inside HTML attribute values.
- * @param {string} value
- * @returns {string}
+ * Prevents XSS attacks by escaping special HTML characters.
+ *
+ * @param {string} value - The string to escape
+ * @returns {string} - The escaped string, or empty string if input is not a string
  */
 function escapeHtmlAttribute(value) {
     if (typeof value !== 'string') {
@@ -45,29 +64,56 @@ function escapeHtmlAttribute(value) {
         .replace(/>/g, '&gt;');
 }
 
-// 默认设置
+/**
+ * Escapes special regex characters in a string so it can be safely used in a RegExp constructor.
+ * This is needed when searching for literal strings that may contain regex special characters.
+ *
+ * @param {string} str - The string to escape
+ * @returns {string} - The escaped string safe for use in RegExp
+ */
+function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Default extension settings
+ * These are used when the extension is first loaded or when settings are missing
+ */
 const defaultSettings = {
+    // Image insertion type (disabled by default)
     insertType: INSERT_TYPE.DISABLED,
+    // Prompt injection configuration
     promptInjection: {
+        // Whether prompt injection is enabled
         enabled: true,
+        // The prompt template that will be injected into the chat completion
+        // This instructs the AI to include <pic> tags in its responses
         prompt: `<image_generation>
 You must insert a <pic prompt="example prompt"> at end of the reply. Prompts are used for stable diffusion image generation, based on the plot and character to output appropriate prompts to generate captivating images.
 </image_generation>`,
+        // Regular expression to match <pic> tags in AI messages
+        // Must capture the prompt as the first capture group (in parentheses)
         regex: '/<pic[^>]*\\sprompt="([^"]*)"[^>]*?>/g',
-        position: 'deep_system', // deep_system, deep_user, deep_assistant
-        depth: 0, // 0表示添加到末尾，>0表示从末尾往前数第几个位置
+        // Position where the prompt should be injected: deep_system, deep_user, or deep_assistant
+        position: 'deep_system',
+        // Depth: 0 means add to the end, >0 means insert from the end at the specified position
+        depth: 0,
     },
 };
 
-// 从设置更新UI
+/**
+ * Updates the UI based on current extension settings
+ * Synchronizes the extension menu button state and settings form fields with the stored settings
+ */
 function updateUI() {
-    // 根据insertType设置开关状态
+    // Update the extension menu button state based on insertType
+    // The button appears selected when the extension is enabled
     $('#auto_generation').toggleClass(
         'selected',
         extension_settings[extensionName].insertType !== INSERT_TYPE.DISABLED,
     );
 
-    // 只在表单元素存在时更新它们
+    // Only update form elements if they exist (settings panel may not be loaded yet)
     if ($('#image_generation_insert_type').length) {
         $('#image_generation_insert_type').val(
             extension_settings[extensionName].insertType,
@@ -91,20 +137,26 @@ function updateUI() {
     }
 }
 
-// 加载设置
+/**
+ * Loads and initializes extension settings
+ * Ensures all required settings exist, using defaults for missing values
+ * This handles migration from older versions and ensures backward compatibility
+ */
 async function loadSettings() {
+    // Initialize extension settings object if it doesn't exist
     extension_settings[extensionName] = extension_settings[extensionName] || {};
 
-    // 如果设置为空或缺少必要属性，使用默认设置
+    // If settings are empty or missing required properties, use default settings
     if (Object.keys(extension_settings[extensionName]).length === 0) {
         Object.assign(extension_settings[extensionName], defaultSettings);
     } else {
-        // 确保promptInjection对象存在
+        // Ensure promptInjection object exists
         if (!extension_settings[extensionName].promptInjection) {
             extension_settings[extensionName].promptInjection =
                 defaultSettings.promptInjection;
         } else {
-            // 确保promptInjection的所有子属性都存在
+            // Ensure all promptInjection sub-properties exist
+            // This handles cases where new settings were added in updates
             const defaultPromptInjection = defaultSettings.promptInjection;
             for (const key in defaultPromptInjection) {
                 if (
@@ -117,29 +169,37 @@ async function loadSettings() {
             }
         }
 
-        // 确保insertType属性存在
+        // Ensure insertType property exists
         if (extension_settings[extensionName].insertType === undefined) {
             extension_settings[extensionName].insertType =
                 defaultSettings.insertType;
         }
     }
 
+    // Update UI to reflect loaded settings
     updateUI();
 }
 
-// 创建设置页面
+/**
+ * Creates and initializes the settings page
+ * Sets up event handlers for all settings form fields
+ *
+ * @param {string} settingsHtml - The HTML content for the settings panel
+ */
 async function createSettings(settingsHtml) {
-    // 创建一个容器来存放设置，确保其正确显示在扩展设置面板中
+    // Create a container for the settings if it doesn't exist
+    // This ensures the settings display correctly in the extension settings panel
     if (!$('#image_auto_generation_container').length) {
         $('#extensions_settings2').append(
             '<div id="image_auto_generation_container" class="extension_container"></div>',
         );
     }
 
-    // 使用传入的settingsHtml而不是重新获取
+    // Use the provided settingsHtml instead of fetching it again
     $('#image_auto_generation_container').empty().append(settingsHtml);
 
-    // 添加设置变更事件处理
+    // Add event handlers for settings changes
+    // Image insertion type dropdown
     $('#image_generation_insert_type').on('change', function () {
         const newValue = $(this).val();
         extension_settings[extensionName].insertType = newValue;
@@ -147,31 +207,35 @@ async function createSettings(settingsHtml) {
         saveSettingsDebounced();
     });
 
-    // 添加提示词注入设置的事件处理
+    // Prompt injection enabled checkbox
     $('#prompt_injection_enabled').on('change', function () {
         extension_settings[extensionName].promptInjection.enabled =
             $(this).prop('checked');
         saveSettingsDebounced();
     });
 
+    // Prompt injection text area
     $('#prompt_injection_text').on('input', function () {
         extension_settings[extensionName].promptInjection.prompt =
             $(this).val();
         saveSettingsDebounced();
     });
 
+    // Prompt injection regex input
     $('#prompt_injection_regex').on('input', function () {
         extension_settings[extensionName].promptInjection.regex = $(this).val();
         saveSettingsDebounced();
     });
 
+    // Prompt injection position dropdown
     $('#prompt_injection_position').on('change', function () {
         extension_settings[extensionName].promptInjection.position =
             $(this).val();
         saveSettingsDebounced();
     });
 
-    // 深度设置事件处理
+    // Prompt injection depth input
+    // Depth determines where in the chat history the prompt is injected
     $('#prompt_injection_depth').on('input', function () {
         const value = parseInt(String($(this).val()));
         extension_settings[extensionName].promptInjection.depth = isNaN(value)
@@ -180,26 +244,30 @@ async function createSettings(settingsHtml) {
         saveSettingsDebounced();
     });
 
-    // 初始化设置值
+    // Initialize UI with current settings values
     updateUI();
 }
 
-// 设置变更处理函数
+/**
+ * Handles clicks on the extension menu button
+ * Opens the extension settings panel and scrolls to this extension's settings
+ * Also expands the settings drawer if it's collapsed
+ */
 function onExtensionButtonClick() {
-    // 直接访问扩展设置面板
+    // Access the extension settings panel directly
     const extensionsDrawer = $('#extensions-settings-button .drawer-toggle');
 
-    // 如果抽屉是关闭的，点击打开它
+    // If the drawer is closed, click to open it
     if ($('#rm_extensions_block').hasClass('closedDrawer')) {
         extensionsDrawer.trigger('click');
     }
 
-    // 等待抽屉打开后滚动到我们的设置容器
+    // Wait for the drawer to open, then scroll to our settings container
     setTimeout(() => {
-        // 找到我们的设置容器
+        // Find our settings container
         const container = $('#image_auto_generation_container');
         if (container.length) {
-            // 滚动到设置面板位置
+            // Scroll to the settings panel position
             $('#rm_extensions_block').animate(
                 {
                     scrollTop:
@@ -210,44 +278,48 @@ function onExtensionButtonClick() {
                 500,
             );
 
-            // 使用SillyTavern原生的抽屉展开方式
-            // 检查抽屉内容是否可见
+            // Use SillyTavern's native drawer expansion method
+            // Check if the drawer content is visible
             const drawerContent = container.find('.inline-drawer-content');
             const drawerHeader = container.find('.inline-drawer-header');
 
-            // 只有当内容被隐藏时才触发展开
+            // Only trigger expansion if content is hidden
             if (drawerContent.is(':hidden') && drawerHeader.length) {
-                // 直接使用原生点击事件触发，而不做任何内部处理
+                // Use native click event to trigger expansion
                 drawerHeader.trigger('click');
             }
         }
     }, 500);
 }
 
-// 初始化扩展
+/**
+ * Initializes the extension when the page loads
+ * Sets up the extension menu button, loads settings, and creates the settings panel
+ */
 $(function () {
     (async function () {
-        // 获取设置HTML (只获取一次)
+        // Fetch settings HTML (only once)
         const settingsHtml = await $.get(
             `${extensionFolderPath}/settings.html`,
         );
 
-        // 添加扩展到菜单
+        // Add extension to the extensions menu
         $('#extensionsMenu')
             .append(`<div id="auto_generation" class="list-group-item flex-container flexGap5">
             <div class="fa-solid fa-robot"></div>
             <span data-i18n="Image Auto Generation">Image Auto Generation</span>
         </div>`);
 
-        // 修改点击事件，打开设置面板而不是切换状态
+        // Set up click event to open settings panel instead of toggling state
         $('#auto_generation').off('click').on('click', onExtensionButtonClick);
 
+        // Load extension settings
         await loadSettings();
 
-        // 创建设置 - 将获取的HTML传递给createSettings
+        // Create settings panel - pass the fetched HTML to createSettings
         await createSettings(settingsHtml);
 
-        // 确保设置面板可见时，设置值是正确的
+        // Ensure settings values are correct when the settings panel becomes visible
         $('#extensions-settings-button').on('click', function () {
             setTimeout(() => {
                 updateUI();
@@ -255,17 +327,24 @@ $(function () {
         });
     })();
 });
-// 获取消息角色
+
+/**
+ * Gets the message role based on the prompt injection position setting
+ * Maps the position setting (deep_system, deep_user, deep_assistant) to the actual role
+ *
+ * @returns {string} - The message role: 'system', 'user', or 'assistant'
+ */
 function getMesRole() {
-    // 确保对象路径存在
+    // Ensure the object path exists
     if (
         !extension_settings[extensionName] ||
         !extension_settings[extensionName].promptInjection ||
         !extension_settings[extensionName].promptInjection.position
     ) {
-        return 'system'; // 默认返回system角色
+        return 'system'; // Default to system role
     }
 
+    // Map position setting to actual role
     switch (extension_settings[extensionName].promptInjection.position) {
         case 'deep_system':
             return 'system';
@@ -278,12 +357,17 @@ function getMesRole() {
     }
 }
 
-// 监听CHAT_COMPLETION_PROMPT_READY事件以注入提示词
+/**
+ * Listens for CHAT_COMPLETION_PROMPT_READY event to inject prompt instructions
+ * This event fires before the chat completion is sent to the AI,
+ * allowing us to inject instructions that tell the AI to include <pic> tags in its responses
+ */
 eventSource.on(
     event_types.CHAT_COMPLETION_PROMPT_READY,
     async function (eventData) {
         try {
-            // 确保设置对象和promptInjection对象都存在
+            // Ensure settings object and promptInjection object exist
+            // Also check if prompt injection is enabled and extension is not disabled
             if (
                 !extension_settings[extensionName] ||
                 !extension_settings[extensionName].promptInjection ||
@@ -294,6 +378,7 @@ eventSource.on(
                 return;
             }
 
+            // Get prompt injection configuration
             const prompt =
                 extension_settings[extensionName].promptInjection.prompt;
             const depth =
@@ -301,38 +386,54 @@ eventSource.on(
             const role = getMesRole();
 
             console.log(
-                `[${extensionName}] 准备注入提示词: 角色=${role}, 深度=${depth}`,
+                `[${extensionName}] Preparing to inject prompt: role=${role}, depth=${depth}`,
             );
             console.log(
-                `[${extensionName}] 提示词内容: ${prompt.substring(0, 50)}...`,
+                `[${extensionName}] Prompt content: ${prompt.substring(0, 50)}...`,
             );
 
-            // 根据depth参数决定插入位置
+            // Determine insertion position based on depth parameter
             if (depth === 0) {
-                // 添加到末尾
+                // Add to the end of the chat array
                 eventData.chat.push({ role: role, content: prompt });
-                console.log(`[${extensionName}] 提示词已添加到聊天末尾`);
+                console.log(`[${extensionName}] Prompt added to end of chat`);
             } else {
-                // 从末尾向前插入
+                // Insert from the end at the specified position
+                // depth=1 means insert before the last message, depth=2 means before the second-to-last, etc.
                 eventData.chat.splice(-depth, 0, {
                     role: role,
                     content: prompt,
                 });
                 console.log(
-                    `[${extensionName}] 提示词已插入到聊天中，从末尾往前第 ${depth} 个位置`,
+                    `[${extensionName}] Prompt inserted at position ${depth} from the end`,
                 );
             }
         } catch (error) {
-            console.error(`[${extensionName}] 提示词注入错误:`, error);
-            toastr.error(`提示词注入错误: ${error}`);
+            console.error(`[${extensionName}] Prompt injection error:`, error);
+            toastr.error(`Prompt injection error: ${error}`);
         }
     },
 );
 
-// 监听消息接收事件
-eventSource.on(event_types.MESSAGE_RECEIVED, handleIncomingMessage);
-async function handleIncomingMessage() {
-    // 确保设置对象存在
+/**
+ * Listens for CHARACTER_MESSAGE_RENDERED event to process incoming AI messages
+ * This event fires after the message has been rendered and regex transformations have been applied.
+ * We use this instead of MESSAGE_RECEIVED to ensure we search in the regex-transformed message.
+ *
+ * IMPORTANT: We must manually apply regex transformations before searching for <pic> tags,
+ * because SillyTavern applies regex transformations to messages, and we need to search
+ * in the transformed message, not the raw one. Otherwise, tags that were transformed by regex
+ * won't be found.
+ */
+eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, handleIncomingMessage);
+
+/**
+ * Handles incoming AI messages and generates images when <pic> tags are detected
+ *
+ * @param {number} messageId - The index of the message in the chat array (optional)
+ */
+async function handleIncomingMessage(messageId) {
+    // Ensure settings object exists and extension is not disabled
     if (
         !extension_settings[extensionName] ||
         extension_settings[extensionName].insertType === INSERT_TYPE.DISABLED
@@ -341,14 +442,17 @@ async function handleIncomingMessage() {
     }
 
     const context = getContext();
-    const message = context.chat[context.chat.length - 1];
 
-    // 检查是否是AI消息
+    // Use messageId parameter if provided, otherwise use the last message
+    const messageIndex = typeof messageId === 'number' ? messageId : (context.chat.length - 1);
+    const message = context.chat[messageIndex];
+
+    // Check if this is an AI message (not a user message)
     if (!message || message.is_user) {
         return;
     }
 
-    // 确保promptInjection对象和regex属性存在
+    // Ensure promptInjection object and regex property exist
     if (
         !extension_settings[extensionName].promptInjection ||
         !extension_settings[extensionName].promptInjection.regex
@@ -357,38 +461,62 @@ async function handleIncomingMessage() {
         return;
     }
 
-    // 使用正则表达式search
+    // IMPORTANT: Manually apply regex transformations before searching for <pic> tags
+    // Regex transformations are normally only applied in messageFormatting(),
+    // but message.mes contains the raw message without regex replacements.
+    // We need to apply regex to find tags that may have been transformed.
+    let messageText = message.mes;
+
+    // Calculate the depth for regex application (similar to how messageFormatting does it)
+    // This determines which regex rules apply based on message position in the conversation
+    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+
+    // Apply regex transformations, exactly like SillyTavern does in messageFormatting()
+    messageText = getRegexedString(messageText, regex_placement.AI_OUTPUT, {
+        characterOverride: message.name,
+        isMarkdown: false, // We're searching for raw tags, not formatted HTML
+        depth: depth,
+    });
+
+    console.log(`[${extensionName}] Original message: ${message.mes.substring(0, 100)}...`);
+    console.log(`[${extensionName}] After regex: ${messageText.substring(0, 100)}...`);
+
+    // Search for image tags using regex - search in the regex-transformed message
     const imgTagRegex = regexFromString(
         extension_settings[extensionName].promptInjection.regex,
     );
-    // const testRegex = regexFromString(extension_settings[extensionName].promptInjection.regex);
+
     let matches;
     if (imgTagRegex.global) {
-        matches = [...message.mes.matchAll(imgTagRegex)];
+        matches = [...messageText.matchAll(imgTagRegex)];
     } else {
-        const singleMatch = message.mes.match(imgTagRegex);
+        const singleMatch = messageText.match(imgTagRegex);
         matches = singleMatch ? [singleMatch] : [];
     }
-    console.log(imgTagRegex, matches);
+
+    console.log(`[${extensionName}] Found ${matches.length} matches:`, matches);
+
     if (matches.length > 0) {
-        // 延迟执行图片生成，确保消息首先显示出来
+        // Delay image generation to ensure the message is displayed first
+        // This prevents blocking the UI rendering
         setTimeout(async () => {
             try {
                 toastr.info(`Generating ${matches.length} images...`);
                 const insertType = extension_settings[extensionName].insertType;
 
-                // 在当前消息中插入图片
-                // 初始化message.extra
+                // Initialize message.extra for image insertion
                 if (!message.extra) {
                     message.extra = {};
                 }
 
-                // 初始化image_swipes数组
+                // Initialize image_swipes array for multiple images
                 if (!Array.isArray(message.extra.image_swipes)) {
                     message.extra.image_swipes = [];
                 }
 
-                // 如果已有图片，添加到swipes
+                // If there's already an image, add it to swipes
                 if (
                     message.extra.image &&
                     !message.extra.image_swipes.includes(message.extra.image)
@@ -396,24 +524,29 @@ async function handleIncomingMessage() {
                     message.extra.image_swipes.push(message.extra.image);
                 }
 
-                // 获取消息元素用于稍后更新
+                // Get the message element for later UI updates
                 const messageElement = $(
-                    `.mes[mesid="${context.chat.length - 1}"]`,
+                    `.mes[mesid="${messageIndex}"]`,
                 );
 
-                // 处理每个匹配的图片标签
+                // Process each matched image tag
                 for (const match of matches) {
+                    // Extract the prompt from the first capture group
                     const prompt =
                         typeof match?.[1] === 'string' ? match[1] : '';
                     if (!prompt.trim()) {
                         continue;
                     }
 
+                    console.log(`[${extensionName}] Generating image with prompt: ${prompt}`);
+
+                    // Call the Stable Diffusion slash command to generate the image
                     // @ts-ignore
                     const result = await SlashCommandParser.commands[
                         'sd'
                     ].callback(
                         {
+                            // quiet: 'true' suppresses toast notifications (except for NEW_MESSAGE mode)
                             quiet:
                                 insertType === INSERT_TYPE.NEW_MESSAGE
                                     ? 'false'
@@ -421,59 +554,82 @@ async function handleIncomingMessage() {
                         },
                         prompt,
                     );
-                    // 统一插入到extra里
+
+                    // Insert image based on the selected insertion type
                     if (insertType === INSERT_TYPE.INLINE) {
+                        // INLINE mode: Insert images into message.extra array (supports image controls)
                         let imageUrl = result;
                         if (
                             typeof imageUrl === 'string' &&
                             imageUrl.trim().length > 0
                         ) {
-                            // 添加图片到swipes数组
+                            // Add image to swipes array
                             message.extra.image_swipes.push(imageUrl);
 
-                            // 设置第一张图片为主图片，或更新为最新生成的图片
+                            // Set the first image as the main image, or update to the latest generated image
                             message.extra.image = imageUrl;
                             message.extra.title = prompt;
                             message.extra.inline_image = true;
 
-                            // 更新UI
+                            // Update the UI to display the image
                             appendMediaToMessage(message, messageElement);
 
-                            // 保存聊天记录
+                            // Save the chat to persist the changes
                             await context.saveChat();
                         }
                     } else if (insertType === INSERT_TYPE.REPLACE) {
+                        // REPLACE mode: Replace the <pic> tag directly with an <img> tag in the message text
                         let imageUrl = result;
                         if (
                             typeof imageUrl === 'string' &&
                             imageUrl.trim().length > 0
                         ) {
                             // Find the original image tag in the message
+                            // IMPORTANT: Use the regex-transformed message to find the tag
                             const originalTag =
                                 typeof match?.[0] === 'string' ? match[0] : '';
                             if (!originalTag) {
                                 continue;
                             }
-                            // Replace it with an actual image tag
+
+                            // Search for the tag in the original message (after regex application)
+                            // Since regex may have transformed the tag, we need to find it in messageText
+                            // But we also need to ensure we replace the correct tag in message.mes
+                            // The best solution is to apply regex again to ensure we find the right tag
+                            const regexedMes = getRegexedString(message.mes, regex_placement.AI_OUTPUT, {
+                                characterOverride: message.name,
+                                isMarkdown: false,
+                                depth: depth,
+                            });
+
+                            // Replace the tag in the original message
                             const escapedUrl = escapeHtmlAttribute(imageUrl);
                             const escapedPrompt = escapeHtmlAttribute(prompt);
                             const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}" alt="${escapedPrompt}">`;
+
+                            // Replace in the raw message (message.mes), not in the regex-processed one
+                            // But we need to find the tag that was produced by regex
+                            // Since regex may have changed the tag, we search for the prompt
+                            const tagToReplace = regexedMes.includes(originalTag)
+                                ? originalTag
+                                : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+
                             message.mes = message.mes.replace(
-                                originalTag,
+                                tagToReplace,
                                 newImageTag,
                             );
 
                             // Update the message display using updateMessageBlock
                             updateMessageBlock(
-                                context.chat.length - 1,
+                                messageIndex,
                                 message,
                             );
                             await eventSource.emit(
                                 event_types.MESSAGE_UPDATED,
-                                context.chat.length - 1,
+                                messageIndex,
                             );
 
-                            // Save the chat
+                            // Save the chat to persist the changes
                             await context.saveChat();
                         }
                     }
@@ -483,8 +639,8 @@ async function handleIncomingMessage() {
                 );
             } catch (error) {
                 toastr.error(`Image generation error: ${error}`);
-                console.error('Image generation error:', error);
+                console.error(`[${extensionName}] Image generation error:`, error);
             }
-        }, 0); //防阻塞UI渲染
+        }, 0); // Prevent blocking UI rendering
     }
 }

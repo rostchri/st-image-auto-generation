@@ -39,5 +39,23 @@
             <label for="prompt_injection_depth" class="flex1" data-i18n="Depth">Depth</label>
             <input id="prompt_injection_depth" class="text_pole widthUnset" type="number" min="0" max="100">
         </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="process_user_messages">
+                <span data-i18n="Process User Messages">Process User Messages</span>
+                <input type="checkbox" id="process_user_messages" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, the extension will also process &lt;pic&gt; tags in user messages (e.g., from Quick Replies). Default: disabled.">When enabled, the extension will also process &lt;pic&gt; tags in user messages (e.g., from Quick Replies). Default: disabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="apply_regex_transformations">
+                <span data-i18n="Apply Regex Transformations">Apply Regex Transformations</span>
+                <input type="checkbox" id="apply_regex_transformations" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, SillyTavern regex transformations are applied to messages before searching for &lt;pic&gt; tags. Useful if your regex rules transform tags. Default: disabled.">When enabled, SillyTavern regex transformations are applied to messages before searching for &lt;pic&gt; tags. Useful if your regex rules transform tags. Default: disabled.</small>
+        </div>
     </div>
-</div> 
+</div>

@@ -82,6 +82,14 @@ function escapeRegex(str) {
 const defaultSettings = {
     // Image insertion type (disabled by default)
     insertType: INSERT_TYPE.DISABLED,
+    // Whether to process user messages for <pic> tags (disabled by default)
+    // When enabled, the extension will also generate images from <pic> tags in user messages
+    // (e.g., from Quick Replies or manual user input)
+    processUserMessages: false,
+    // Whether to apply SillyTavern regex transformations before searching for <pic> tags (disabled by default)
+    // When enabled, regex transformations are applied to messages before searching for tags
+    // This is useful if your regex rules transform <pic> tags, but may not be needed in all cases
+    applyRegexTransformations: false,
     // Prompt injection configuration
     promptInjection: {
         // Whether prompt injection is enabled
@@ -134,6 +142,14 @@ function updateUI() {
         $('#prompt_injection_depth').val(
             extension_settings[extensionName].promptInjection.depth,
         );
+        $('#process_user_messages').prop(
+            'checked',
+            extension_settings[extensionName].processUserMessages || false,
+        );
+        $('#apply_regex_transformations').prop(
+            'checked',
+            extension_settings[extensionName].applyRegexTransformations || false,
+        );
     }
 }
 
@@ -173,6 +189,18 @@ async function loadSettings() {
         if (extension_settings[extensionName].insertType === undefined) {
             extension_settings[extensionName].insertType =
                 defaultSettings.insertType;
+        }
+
+        // Ensure processUserMessages property exists
+        if (extension_settings[extensionName].processUserMessages === undefined) {
+            extension_settings[extensionName].processUserMessages =
+                defaultSettings.processUserMessages;
+        }
+
+        // Ensure applyRegexTransformations property exists
+        if (extension_settings[extensionName].applyRegexTransformations === undefined) {
+            extension_settings[extensionName].applyRegexTransformations =
+                defaultSettings.applyRegexTransformations;
         }
     }
 
@@ -241,6 +269,22 @@ async function createSettings(settingsHtml) {
         extension_settings[extensionName].promptInjection.depth = isNaN(value)
             ? 0
             : value;
+        saveSettingsDebounced();
+    });
+
+    // Process user messages checkbox
+    // When enabled, the extension will also process <pic> tags in user messages
+    $('#process_user_messages').on('change', function () {
+        extension_settings[extensionName].processUserMessages =
+            $(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    // Apply regex transformations checkbox
+    // When enabled, SillyTavern regex transformations are applied before searching for <pic> tags
+    $('#apply_regex_transformations').on('change', function () {
+        extension_settings[extensionName].applyRegexTransformations =
+            $(this).prop('checked');
         saveSettingsDebounced();
     });
 
@@ -428,7 +472,26 @@ eventSource.on(
 eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, handleIncomingMessage);
 
 /**
- * Handles incoming AI messages and generates images when <pic> tags are detected
+ * Listens for MESSAGE_RECEIVED event to process user messages (if enabled)
+ * This allows processing <pic> tags in user messages, such as from Quick Replies.
+ * Note: For user messages, we also need to apply regex transformations manually.
+ */
+eventSource.on(event_types.MESSAGE_RECEIVED, function (messageId) {
+    // Only process if user message processing is enabled
+    if (
+        extension_settings[extensionName] &&
+        extension_settings[extensionName].processUserMessages
+    ) {
+        // Use a small delay to ensure the message is fully processed
+        setTimeout(() => {
+            handleIncomingMessage(messageId);
+        }, 100);
+    }
+});
+
+/**
+ * Handles incoming messages and generates images when <pic> tags are detected
+ * Can process both AI messages and user messages (if processUserMessages is enabled)
  *
  * @param {number} messageId - The index of the message in the chat array (optional)
  */
@@ -447,8 +510,13 @@ async function handleIncomingMessage(messageId) {
     const messageIndex = typeof messageId === 'number' ? messageId : (context.chat.length - 1);
     const message = context.chat[messageIndex];
 
-    // Check if this is an AI message (not a user message)
-    if (!message || message.is_user) {
+    // Check if message exists
+    if (!message) {
+        return;
+    }
+
+    // Check if this is a user message and if user message processing is disabled
+    if (message.is_user && !extension_settings[extensionName].processUserMessages) {
         return;
     }
 
@@ -461,27 +529,39 @@ async function handleIncomingMessage(messageId) {
         return;
     }
 
-    // IMPORTANT: Manually apply regex transformations before searching for <pic> tags
+    // Optionally apply regex transformations before searching for <pic> tags
     // Regex transformations are normally only applied in messageFormatting(),
     // but message.mes contains the raw message without regex replacements.
-    // We need to apply regex to find tags that may have been transformed.
+    // If applyRegexTransformations is enabled, we apply regex to find tags that may have been transformed.
     let messageText = message.mes;
+    let regexPlacement = null;
 
-    // Calculate the depth for regex application (similar to how messageFormatting does it)
-    // This determines which regex rules apply based on message position in the conversation
-    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
-    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+    // Only apply regex transformations if the option is enabled
+    if (extension_settings[extensionName].applyRegexTransformations) {
+        // Calculate the depth for regex application (similar to how messageFormatting does it)
+        // This determines which regex rules apply based on message position in the conversation
+        const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+        const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+        const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
 
-    // Apply regex transformations, exactly like SillyTavern does in messageFormatting()
-    messageText = getRegexedString(messageText, regex_placement.AI_OUTPUT, {
-        characterOverride: message.name,
-        isMarkdown: false, // We're searching for raw tags, not formatted HTML
-        depth: depth,
-    });
+        // Apply regex transformations, exactly like SillyTavern does in messageFormatting()
+        // Use USER_INPUT for user messages, AI_OUTPUT for AI messages
+        // If USER_INPUT doesn't exist, fall back to AI_OUTPUT
+        regexPlacement = message.is_user
+            ? (regex_placement.USER_INPUT || regex_placement.AI_OUTPUT)
+            : regex_placement.AI_OUTPUT;
 
-    console.log(`[${extensionName}] Original message: ${message.mes.substring(0, 100)}...`);
-    console.log(`[${extensionName}] After regex: ${messageText.substring(0, 100)}...`);
+        messageText = getRegexedString(messageText, regexPlacement, {
+            characterOverride: message.name,
+            isMarkdown: false, // We're searching for raw tags, not formatted HTML
+            depth: depth,
+        });
+
+        console.log(`[${extensionName}] Original message: ${message.mes.substring(0, 100)}...`);
+        console.log(`[${extensionName}] After regex: ${messageText.substring(0, 100)}...`);
+    } else {
+        console.log(`[${extensionName}] Searching in raw message (regex transformations disabled): ${message.mes.substring(0, 100)}...`);
+    }
 
     // Search for image tags using regex - search in the regex-transformed message
     const imgTagRegex = regexFromString(
@@ -585,34 +665,43 @@ async function handleIncomingMessage(messageId) {
                             imageUrl.trim().length > 0
                         ) {
                             // Find the original image tag in the message
-                            // IMPORTANT: Use the regex-transformed message to find the tag
                             const originalTag =
                                 typeof match?.[0] === 'string' ? match[0] : '';
                             if (!originalTag) {
                                 continue;
                             }
 
-                            // Search for the tag in the original message (after regex application)
-                            // Since regex may have transformed the tag, we need to find it in messageText
-                            // But we also need to ensure we replace the correct tag in message.mes
-                            // The best solution is to apply regex again to ensure we find the right tag
-                            const regexedMes = getRegexedString(message.mes, regex_placement.AI_OUTPUT, {
-                                characterOverride: message.name,
-                                isMarkdown: false,
-                                depth: depth,
-                            });
+                            // If regex transformations are enabled, we need to find the tag in the regex-transformed message
+                            // Otherwise, we can directly use the original tag from the match
+                            let tagToReplace = originalTag;
+
+                            if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                // Search for the tag in the original message (after regex application)
+                                // Since regex may have transformed the tag, we need to find it in messageText
+                                // But we also need to ensure we replace the correct tag in message.mes
+                                // The best solution is to apply regex again to ensure we find the right tag
+                                const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+
+                                const regexedMes = getRegexedString(message.mes, regexPlacement, {
+                                    characterOverride: message.name,
+                                    isMarkdown: false,
+                                    depth: depth,
+                                });
+
+                                // Replace in the raw message (message.mes), not in the regex-processed one
+                                // But we need to find the tag that was produced by regex
+                                // Since regex may have changed the tag, we search for the prompt
+                                tagToReplace = regexedMes.includes(originalTag)
+                                    ? originalTag
+                                    : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+                            }
 
                             // Replace the tag in the original message
                             const escapedUrl = escapeHtmlAttribute(imageUrl);
                             const escapedPrompt = escapeHtmlAttribute(prompt);
                             const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}" alt="${escapedPrompt}">`;
-
-                            // Replace in the raw message (message.mes), not in the regex-processed one
-                            // But we need to find the tag that was produced by regex
-                            // Since regex may have changed the tag, we search for the prompt
-                            const tagToReplace = regexedMes.includes(originalTag)
-                                ? originalTag
-                                : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
 
                             message.mes = message.mes.replace(
                                 tagToReplace,

@@ -520,6 +520,20 @@ async function handleIncomingMessage(messageId) {
         return;
     }
 
+    // CRITICAL: Prevent infinite loops by checking if this message has already been processed
+    // When we update a message (e.g., replace <pic> tags or add images), it can trigger
+    // new events that would cause this function to run again. We mark messages as processed
+    // to prevent re-processing them.
+    if (!message.extra) {
+        message.extra = {};
+    }
+
+    // Check if message has already been processed by this extension
+    if (message.extra[`${extensionName}_processed`]) {
+        console.log(`[${extensionName}] Message ${messageIndex} already processed, skipping to prevent infinite loop`);
+        return;
+    }
+
     // Ensure promptInjection object and regex property exist
     if (
         !extension_settings[extensionName].promptInjection ||
@@ -579,6 +593,16 @@ async function handleIncomingMessage(messageId) {
     console.log(`[${extensionName}] Found ${matches.length} matches:`, matches);
 
     if (matches.length > 0) {
+        // CRITICAL: Mark message as processed IMMEDIATELY to prevent infinite loops
+        // This must be done before any async operations that might trigger new events
+        // When we update a message (e.g., replace <pic> tags or add images), it can trigger
+        // new events that would cause this function to run again. We mark messages as processed
+        // to prevent re-processing them.
+        if (!message.extra) {
+            message.extra = {};
+        }
+        message.extra[`${extensionName}_processed`] = true;
+
         // Delay image generation to ensure the message is displayed first
         // This prevents blocking the UI rendering
         setTimeout(async () => {
@@ -586,7 +610,7 @@ async function handleIncomingMessage(messageId) {
                 toastr.info(`Generating ${matches.length} images...`);
                 const insertType = extension_settings[extensionName].insertType;
 
-                // Initialize message.extra for image insertion
+                // Initialize message.extra for image insertion (already initialized above, but ensure it exists)
                 if (!message.extra) {
                     message.extra = {};
                 }

@@ -894,12 +894,11 @@ async function handleIncomingMessage(messageId) {
                                     }
 
                                     // Replace the tag with a special placeholder that will be converted to an image viewer
-                                    // We use a data attribute to store the image URL and prompt
                                     const escapedUrl = escapeHtmlAttribute(img.url);
                                     const escapedPrompt = escapeHtmlAttribute(img.prompt);
-                                    // Use a div with data attributes that can be processed by JavaScript to create image viewers
+                                    // Use a div with inline image - title attribute is sufficient for hover tooltip
                                     // This allows multiple viewers in one message
-                                    const imageViewerPlaceholder = `<div class="inline-image-viewer" data-image-url="${escapedUrl}" data-prompt="${escapedPrompt}" style="display: inline-block; margin: 4px;"><img src="${escapedUrl}" alt="${escapedPrompt}" title="${escapedPrompt}" onclick="window.open('${escapedUrl}', '_blank')"></div>`;
+                                    const imageViewerPlaceholder = `<div class="inline-image-viewer" style="display: inline-block; margin: 4px;"><img src="${escapedUrl}" title="${escapedPrompt}" onclick="window.open('${escapedUrl}', '_blank')"></div>`;
 
                                     message.mes = message.mes.replace(tagToReplace, imageViewerPlaceholder);
                                 }
@@ -1049,7 +1048,8 @@ async function handleIncomingMessage(messageId) {
 
                                 const escapedUrl = escapeHtmlAttribute(img.url);
                                 const escapedPrompt = escapeHtmlAttribute(img.prompt);
-                                const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}" alt="${escapedPrompt}">`;
+                                // title attribute is sufficient for hover tooltip, no need for redundant alt
+                                const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}">`;
 
                                 message.mes = message.mes.replace(
                                     tagToReplace,

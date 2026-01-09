@@ -704,7 +704,11 @@ async function handleIncomingMessage(messageId) {
                     `.mes[mesid="${messageIndex}"]`,
                 );
 
-                // Process each matched image tag
+                // Collect all image generation tasks first
+                // This allows us to process all images and then update the UI once at the end
+                const imageGenerationTasks = [];
+
+                // Process each matched image tag and collect generation tasks
                 for (const match of matches) {
                     // Extract the prompt from the first capture group
                     const prompt =
@@ -713,7 +717,16 @@ async function handleIncomingMessage(messageId) {
                         continue;
                     }
 
-                    console.log(`[${extensionName}] Generating image with prompt: ${prompt}`);
+                    imageGenerationTasks.push({
+                        match: match,
+                        prompt: prompt,
+                    });
+                }
+
+                // Generate all images first, then update UI once
+                const generatedImages = [];
+                for (const task of imageGenerationTasks) {
+                    console.log(`[${extensionName}] Generating image with prompt: ${task.prompt}`);
 
                     // Call the Stable Diffusion slash command to generate the image
                     // @ts-ignore
@@ -727,136 +740,164 @@ async function handleIncomingMessage(messageId) {
                                     ? 'false'
                                     : 'true',
                         },
-                        prompt,
+                        task.prompt,
                     );
 
-                    // Insert image based on the selected insertion type
+                    if (typeof result === 'string' && result.trim().length > 0) {
+                        generatedImages.push({
+                            url: result,
+                            prompt: task.prompt,
+                            match: task.match,
+                        });
+                    }
+                }
+
+                // Now process all generated images at once
+                if (generatedImages.length > 0) {
+                    // Insert images based on the selected insertion type
                     if (insertType === INSERT_TYPE.INLINE) {
                         // INLINE mode: Insert images into message.extra array (supports image controls)
-                        let imageUrl = result;
-                        if (
-                            typeof imageUrl === 'string' &&
-                            imageUrl.trim().length > 0
-                        ) {
-                            // Add image to swipes array
-                            message.extra.image_swipes.push(imageUrl);
-
-                            // Set the first image as the main image, or update to the latest generated image
-                            message.extra.image = imageUrl;
-                            message.extra.title = prompt;
-                            message.extra.inline_image = true;
-
-                            // Update the UI to display the image
-                            appendMediaToMessage(message, messageElement);
-
-                            // Save the chat to persist the changes
-                            await context.saveChat();
+                        // Add all images to swipes array
+                        for (const img of generatedImages) {
+                            if (!message.extra.image_swipes.includes(img.url)) {
+                                message.extra.image_swipes.push(img.url);
+                            }
                         }
+
+                        // Set the first image as the main image (only if not already set)
+                        if (!message.extra.image && generatedImages.length > 0) {
+                            message.extra.image = generatedImages[0].url;
+                            message.extra.title = generatedImages[0].prompt;
+                        }
+                        message.extra.inline_image = true;
+
+                        // Update the UI to display all images at once
+                        appendMediaToMessage(message, messageElement);
+
+                        // Save the chat to persist the changes
+                        await context.saveChat();
                     } else if (insertType === INSERT_TYPE.REPLACE) {
                         // REPLACE mode: Replace the <pic> tag in the message text
                         // Can use either SillyTavern's image viewer (with zoom, prompt display, seed regeneration)
                         // or simple <img> tags, depending on the replaceModeUseImageViewer setting
-                        let imageUrl = result;
-                        if (
-                            typeof imageUrl === 'string' &&
-                            imageUrl.trim().length > 0
-                        ) {
-                            // Find the original image tag in the message
-                            const originalTag =
-                                typeof match?.[0] === 'string' ? match[0] : '';
-                            if (!originalTag) {
-                                continue;
-                            }
 
-                            // If regex transformations are enabled, we need to find the tag in the regex-transformed message
-                            // Otherwise, we can directly use the original tag from the match
-                            let tagToReplace = originalTag;
+                        // Check if image viewer should be used in REPLACE mode
+                        const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
 
-                            if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
-                                // Search for the tag in the original message (after regex application)
-                                // Since regex may have transformed the tag, we need to find it in messageText
-                                // But we also need to ensure we replace the correct tag in message.mes
-                                // The best solution is to apply regex again to ensure we find the right tag
-                                const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-                                const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
-                                const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+                        if (useImageViewer) {
+                            // Use SillyTavern's image viewer: Remove all <pic> tags and add images to message.extra
+                            // This provides zoom, prompt display, and seed regeneration features
 
-                                const regexedMes = getRegexedString(message.mes, regexPlacement, {
-                                    characterOverride: message.name,
-                                    isMarkdown: false,
-                                    depth: depth,
-                                });
+                            // Remove all <pic> tags from the message text
+                            for (const img of generatedImages) {
+                                const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
+                                if (!originalTag) {
+                                    continue;
+                                }
 
-                                // Replace in the raw message (message.mes), not in the regex-processed one
-                                // But we need to find the tag that was produced by regex
-                                // Since regex may have changed the tag, we search for the prompt
-                                tagToReplace = regexedMes.includes(originalTag)
-                                    ? originalTag
-                                    : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
-                            }
+                                // If regex transformations are enabled, we need to find the tag in the regex-transformed message
+                                let tagToReplace = originalTag;
 
-                            // Check if image viewer should be used in REPLACE mode
-                            const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
+                                if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
 
-                            if (useImageViewer) {
-                                // Use SillyTavern's image viewer: Remove the <pic> tag and add image to message.extra
-                                // This provides zoom, prompt display, and seed regeneration features
+                                    const regexedMes = getRegexedString(message.mes, regexPlacement, {
+                                        characterOverride: message.name,
+                                        isMarkdown: false,
+                                        depth: depth,
+                                    });
+
+                                    tagToReplace = regexedMes.includes(originalTag)
+                                        ? originalTag
+                                        : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+                                }
+
                                 message.mes = message.mes.replace(tagToReplace, '');
+                            }
 
-                                // Add image to message.extra to use SillyTavern's image viewer
-                                if (!message.extra) {
-                                    message.extra = {};
+                            // Add all images to message.extra to use SillyTavern's image viewer
+                            if (!message.extra) {
+                                message.extra = {};
+                            }
+                            if (!Array.isArray(message.extra.image_swipes)) {
+                                message.extra.image_swipes = [];
+                            }
+
+                            // Add all images to swipes array
+                            for (const img of generatedImages) {
+                                if (!message.extra.image_swipes.includes(img.url)) {
+                                    message.extra.image_swipes.push(img.url);
                                 }
-                                if (!Array.isArray(message.extra.image_swipes)) {
-                                    message.extra.image_swipes = [];
+                            }
+
+                            // Set the first image as the main image (only if not already set)
+                            if (!message.extra.image && generatedImages.length > 0) {
+                                message.extra.image = generatedImages[0].url;
+                                message.extra.title = generatedImages[0].prompt;
+                            }
+                            message.extra.inline_image = true;
+
+                            // Update the message display using updateMessageBlock (only once)
+                            updateMessageBlock(
+                                messageIndex,
+                                message,
+                            );
+
+                            // Update the UI to display all images with the image viewer (only once)
+                            appendMediaToMessage(message, messageElement);
+                        } else {
+                            // Use simple <img> tags: Replace each <pic> tag with an <img> tag
+                            for (const img of generatedImages) {
+                                const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
+                                if (!originalTag) {
+                                    continue;
                                 }
 
-                                // Add image to swipes array
-                                message.extra.image_swipes.push(imageUrl);
+                                // If regex transformations are enabled, we need to find the tag in the regex-transformed message
+                                let tagToReplace = originalTag;
 
-                                // Set the first image as the main image, or update to the latest generated image
-                                message.extra.image = imageUrl;
-                                message.extra.title = prompt;
-                                message.extra.inline_image = true;
+                                if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
 
-                                // Update the message display using updateMessageBlock
-                                // Note: This might trigger CHARACTER_MESSAGE_RENDERED event, but our
-                                // processedMessages Set will prevent re-processing
-                                updateMessageBlock(
-                                    messageIndex,
-                                    message,
-                                );
+                                    const regexedMes = getRegexedString(message.mes, regexPlacement, {
+                                        characterOverride: message.name,
+                                        isMarkdown: false,
+                                        depth: depth,
+                                    });
 
-                                // Update the UI to display the image with the image viewer
-                                appendMediaToMessage(message, messageElement);
-                            } else {
-                                // Use simple <img> tag: Replace the <pic> tag with an <img> tag
-                                const escapedUrl = escapeHtmlAttribute(imageUrl);
-                                const escapedPrompt = escapeHtmlAttribute(prompt);
+                                    tagToReplace = regexedMes.includes(originalTag)
+                                        ? originalTag
+                                        : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
+                                }
+
+                                const escapedUrl = escapeHtmlAttribute(img.url);
+                                const escapedPrompt = escapeHtmlAttribute(img.prompt);
                                 const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}" alt="${escapedPrompt}">`;
 
                                 message.mes = message.mes.replace(
                                     tagToReplace,
                                     newImageTag,
                                 );
-
-                                // Update the message display using updateMessageBlock
-                                // Note: This might trigger CHARACTER_MESSAGE_RENDERED event, but our
-                                // processedMessages Set will prevent re-processing
-                                updateMessageBlock(
-                                    messageIndex,
-                                    message,
-                                );
                             }
 
-                            await eventSource.emit(
-                                event_types.MESSAGE_UPDATED,
+                            // Update the message display using updateMessageBlock (only once)
+                            updateMessageBlock(
                                 messageIndex,
+                                message,
                             );
-
-                            // Save the chat to persist the changes
-                            await context.saveChat();
                         }
+
+                        await eventSource.emit(
+                            event_types.MESSAGE_UPDATED,
+                            messageIndex,
+                        );
+
+                        // Save the chat to persist the changes
+                        await context.saveChat();
                     }
                 }
                 toastr.success(

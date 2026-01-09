@@ -902,6 +902,42 @@ async function handleIncomingMessage(messageId) {
 
                                     message.mes = message.mes.replace(tagToReplace, imageViewerPlaceholder);
                                 }
+
+                                // Save the chat first to persist the message changes
+                                await context.saveChat();
+
+                                // Update the message display using updateMessageBlock (only once, after all replacements)
+                                // Use a small delay to ensure the message element exists in the DOM
+                                // This is especially important for normal events (not Edit), where the message might not be fully rendered yet
+                                setTimeout(() => {
+                                    const messageElement = $(
+                                        `.mes[mesid="${messageIndex}"]`,
+                                    );
+                                    if (messageElement.length > 0) {
+                                        updateMessageBlock(
+                                            messageIndex,
+                                            message,
+                                        );
+                                        console.log(`[${extensionName}] Updated message block for multiple inline viewers`);
+                                    } else {
+                                        console.warn(`[${extensionName}] Message element not found for index ${messageIndex}, retrying...`);
+                                        // Retry once after a longer delay
+                                        setTimeout(() => {
+                                            const retryElement = $(
+                                                `.mes[mesid="${messageIndex}"]`,
+                                            );
+                                            if (retryElement.length > 0) {
+                                                updateMessageBlock(
+                                                    messageIndex,
+                                                    message,
+                                                );
+                                                console.log(`[${extensionName}] Updated message block for multiple inline viewers (retry)`);
+                                            } else {
+                                                console.error(`[${extensionName}] Message element still not found after retry for index ${messageIndex}`);
+                                            }
+                                        }, 500);
+                                    }
+                                }, 100);
                             } else {
                                 // Use single combined image viewer: Remove all <pic> tags and add images to message.extra
                                 // This provides zoom, prompt display, and seed regeneration features

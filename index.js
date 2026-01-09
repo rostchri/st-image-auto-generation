@@ -42,7 +42,7 @@ const processedMessages = new Set();
  * - DISABLED: Extension is disabled, no image generation
  * - INLINE: Insert images into the message's extra array (supports image controls)
  * - NEW_MESSAGE: Create new messages with generated images (default ST method, best compatibility)
- * - REPLACE: Replace the <pic> tag directly with an <img> tag in the message text
+ * - REPLACE: Remove the <pic> tag from the message text and add image to message.extra (uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration)
  */
 const INSERT_TYPE = {
     DISABLED: 'disabled',
@@ -97,6 +97,10 @@ const defaultSettings = {
     // When enabled, regex transformations are applied to messages before searching for tags
     // This is useful if your regex rules transform <pic> tags, but may not be needed in all cases
     applyRegexTransformations: false,
+    // Whether to use SillyTavern's image viewer in REPLACE mode (enabled by default)
+    // When enabled, images use the full image viewer with zoom, prompt display, and seed regeneration
+    // When disabled, images are inserted as simple <img> tags in the message text
+    replaceModeUseImageViewer: true,
     // Prompt injection configuration
     promptInjection: {
         // Whether prompt injection is enabled
@@ -157,6 +161,10 @@ function updateUI() {
             'checked',
             extension_settings[extensionName].applyRegexTransformations || false,
         );
+        $('#replace_mode_use_image_viewer').prop(
+            'checked',
+            extension_settings[extensionName].replaceModeUseImageViewer !== false, // Default to true
+        );
     }
 }
 
@@ -208,6 +216,12 @@ async function loadSettings() {
         if (extension_settings[extensionName].applyRegexTransformations === undefined) {
             extension_settings[extensionName].applyRegexTransformations =
                 defaultSettings.applyRegexTransformations;
+        }
+
+        // Ensure replaceModeUseImageViewer property exists
+        if (extension_settings[extensionName].replaceModeUseImageViewer === undefined) {
+            extension_settings[extensionName].replaceModeUseImageViewer =
+                defaultSettings.replaceModeUseImageViewer;
         }
     }
 
@@ -291,6 +305,15 @@ async function createSettings(settingsHtml) {
     // When enabled, SillyTavern regex transformations are applied before searching for <pic> tags
     $('#apply_regex_transformations').on('change', function () {
         extension_settings[extensionName].applyRegexTransformations =
+            $(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    // Replace mode use image viewer checkbox
+    // When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration
+    // When disabled, REPLACE mode uses simple <img> tags
+    $('#replace_mode_use_image_viewer').on('change', function () {
+        extension_settings[extensionName].replaceModeUseImageViewer =
             $(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -685,7 +708,9 @@ async function handleIncomingMessage(messageId) {
                             await context.saveChat();
                         }
                     } else if (insertType === INSERT_TYPE.REPLACE) {
-                        // REPLACE mode: Replace the <pic> tag directly with an <img> tag in the message text
+                        // REPLACE mode: Replace the <pic> tag in the message text
+                        // Can use either SillyTavern's image viewer (with zoom, prompt display, seed regeneration)
+                        // or simple <img> tags, depending on the replaceModeUseImageViewer setting
                         let imageUrl = result;
                         if (
                             typeof imageUrl === 'string' &&
@@ -725,23 +750,60 @@ async function handleIncomingMessage(messageId) {
                                     : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
                             }
 
-                            // Replace the tag in the original message
-                            const escapedUrl = escapeHtmlAttribute(imageUrl);
-                            const escapedPrompt = escapeHtmlAttribute(prompt);
-                            const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}" alt="${escapedPrompt}">`;
+                            // Check if image viewer should be used in REPLACE mode
+                            const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
 
-                            message.mes = message.mes.replace(
-                                tagToReplace,
-                                newImageTag,
-                            );
+                            if (useImageViewer) {
+                                // Use SillyTavern's image viewer: Remove the <pic> tag and add image to message.extra
+                                // This provides zoom, prompt display, and seed regeneration features
+                                message.mes = message.mes.replace(tagToReplace, '');
 
-                            // Update the message display using updateMessageBlock
-                            // Note: This might trigger CHARACTER_MESSAGE_RENDERED event, but our
-                            // processedMessages Set will prevent re-processing
-                            updateMessageBlock(
-                                messageIndex,
-                                message,
-                            );
+                                // Add image to message.extra to use SillyTavern's image viewer
+                                if (!message.extra) {
+                                    message.extra = {};
+                                }
+                                if (!Array.isArray(message.extra.image_swipes)) {
+                                    message.extra.image_swipes = [];
+                                }
+
+                                // Add image to swipes array
+                                message.extra.image_swipes.push(imageUrl);
+
+                                // Set the first image as the main image, or update to the latest generated image
+                                message.extra.image = imageUrl;
+                                message.extra.title = prompt;
+                                message.extra.inline_image = true;
+
+                                // Update the message display using updateMessageBlock
+                                // Note: This might trigger CHARACTER_MESSAGE_RENDERED event, but our
+                                // processedMessages Set will prevent re-processing
+                                updateMessageBlock(
+                                    messageIndex,
+                                    message,
+                                );
+
+                                // Update the UI to display the image with the image viewer
+                                appendMediaToMessage(message, messageElement);
+                            } else {
+                                // Use simple <img> tag: Replace the <pic> tag with an <img> tag
+                                const escapedUrl = escapeHtmlAttribute(imageUrl);
+                                const escapedPrompt = escapeHtmlAttribute(prompt);
+                                const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}" alt="${escapedPrompt}">`;
+
+                                message.mes = message.mes.replace(
+                                    tagToReplace,
+                                    newImageTag,
+                                );
+
+                                // Update the message display using updateMessageBlock
+                                // Note: This might trigger CHARACTER_MESSAGE_RENDERED event, but our
+                                // processedMessages Set will prevent re-processing
+                                updateMessageBlock(
+                                    messageIndex,
+                                    message,
+                                );
+                            }
+
                             await eventSource.emit(
                                 event_types.MESSAGE_UPDATED,
                                 messageIndex,

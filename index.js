@@ -589,14 +589,14 @@ eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
 });
 
 /**
- * Listens for image swipe changes to update the title (prompt) when user swipes between images
- * When user swipes, SillyTavern updates message.extra.image, and we need to update message.extra.title
+ * Listens for IMAGE_SWIPED event to update the title (prompt) when user swipes between images
+ * When user swipes, SillyTavern's onImageSwiped updates message.extra.image, and we need to update message.extra.title
  * to match the current image from the image_titles array
+ *
+ * IMPORTANT: The event is emitted when the button is clicked, but onImageSwiped updates the image.
+ * We calculate the new index based on the direction to update the title immediately, then verify after a delay.
  */
-eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
-    const context = getContext();
-    const message = context.chat[messageId];
-
+eventSource.on(event_types.IMAGE_SWIPED, function ({ message, element, direction }) {
     // Only process if message has image_swipes and image_titles
     if (!message || !message.extra || !Array.isArray(message.extra.image_swipes) || !Array.isArray(message.extra.image_titles)) {
         return;
@@ -604,22 +604,68 @@ eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
 
     // Check if image_swipes and image_titles are parallel (same length)
     if (message.extra.image_swipes.length !== message.extra.image_titles.length) {
-        console.warn(`[${extensionName}] image_swipes and image_titles arrays are not parallel for message ${messageId}`);
+        console.warn(`[${extensionName}] image_swipes and image_titles arrays are not parallel`);
         return;
     }
 
-    // If message.extra.image is set, find its index in image_swipes and update title from image_titles
-    if (message.extra.image && message.extra.image_swipes.length > 0) {
-        const currentImageIndex = message.extra.image_swipes.indexOf(message.extra.image);
-        if (currentImageIndex >= 0 && currentImageIndex < message.extra.image_titles.length) {
-            const titleForCurrentImage = message.extra.image_titles[currentImageIndex] || '';
-            if (message.extra.title !== titleForCurrentImage) {
-                message.extra.title = titleForCurrentImage;
-                console.log(`[${extensionName}] Updated title after swipe to image ${currentImageIndex}: ${titleForCurrentImage.substring(0, 50)}...`);
-                // Save the change
-                context.saveChat();
+    if (message.extra.image_swipes.length === 0) {
+        return;
+    }
+
+    // Find the current image index BEFORE the swipe
+    const currentIndex = message.extra.image_swipes.indexOf(message.extra.image);
+    if (currentIndex === -1) {
+        console.warn(`[${extensionName}] Current image not found in image_swipes`);
+        return;
+    }
+
+    // Calculate the new index based on direction (same logic as onImageSwiped)
+    let newIndex;
+    if (direction === 'left') {
+        // Switch to previous image or wrap around if at the beginning
+        newIndex = currentIndex === 0 ? message.extra.image_swipes.length - 1 : currentIndex - 1;
+    } else if (direction === 'right') {
+        // Switch to next image (or generate new one if at end, but we can't predict that)
+        // For now, just handle the case where we're not at the end
+        newIndex = currentIndex === message.extra.image_swipes.length - 1 ? currentIndex : currentIndex + 1;
+    } else {
+        return;
+    }
+
+    // Update the title immediately based on the calculated new index
+    if (newIndex >= 0 && newIndex < message.extra.image_titles.length) {
+        const titleForNewImage = message.extra.image_titles[newIndex] || '';
+        message.extra.title = titleForNewImage;
+        console.log(`[${extensionName}] Updated title for swipe ${direction} to image ${newIndex + 1}/${message.extra.image_swipes.length}: ${titleForNewImage.substring(0, 50)}...`);
+
+        // Update the image title attribute in the DOM after a small delay to ensure the image has been updated
+        setTimeout(() => {
+            if (element) {
+                const image = element.find('.mes_img');
+                if (image.length > 0) {
+                    image.attr('title', titleForNewImage);
+                }
             }
-        }
+            // Verify that the image was actually updated correctly
+            const actualIndex = message.extra.image_swipes.indexOf(message.extra.image);
+            if (actualIndex !== newIndex && actualIndex >= 0 && actualIndex < message.extra.image_titles.length) {
+                // Image index doesn't match our calculation, update title again
+                const actualTitle = message.extra.image_titles[actualIndex] || '';
+                if (message.extra.title !== actualTitle) {
+                    message.extra.title = actualTitle;
+                    console.log(`[${extensionName}] Corrected title after verification: ${actualTitle.substring(0, 50)}...`);
+                    if (element) {
+                        const image = element.find('.mes_img');
+                        if (image.length > 0) {
+                            image.attr('title', actualTitle);
+                        }
+                    }
+                }
+            }
+            // Save the change to persist the updated title
+            const context = getContext();
+            context.saveChat();
+        }, 100); // Small delay to ensure onImageSwiped has updated the image
     }
 });
 
@@ -767,6 +813,22 @@ async function handleIncomingMessage(messageId) {
                             message.extra.image_titles.unshift(message.extra.title);
                         } else {
                             message.extra.image_titles.unshift('');
+                        }
+                    } else {
+                        // Image is already in swipes, but ensure image_titles has a corresponding entry
+                        const existingIndex = message.extra.image_swipes.indexOf(message.extra.image);
+                        if (existingIndex >= 0 && existingIndex < message.extra.image_titles.length) {
+                            // Entry exists, update it if we have a title
+                            if (message.extra.title && message.extra.image_titles[existingIndex] !== message.extra.title) {
+                                message.extra.image_titles[existingIndex] = message.extra.title;
+                            }
+                        } else {
+                            // Entry doesn't exist, add it at the correct position
+                            // This shouldn't happen, but handle it gracefully
+                            while (message.extra.image_titles.length < existingIndex) {
+                                message.extra.image_titles.push('');
+                            }
+                            message.extra.image_titles[existingIndex] = message.extra.title || '';
                         }
                     }
                 }

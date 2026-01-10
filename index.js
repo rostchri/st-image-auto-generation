@@ -109,6 +109,10 @@ const defaultSettings = {
     // Whether to process <pic> tags when messages are edited (enabled by default)
     // When enabled, adding <pic> tags to existing messages via edit will trigger image generation
     processEditedMessages: true,
+    // Maximum number of times images can be generated for a single message (default: 1)
+    // This prevents infinite loops when regex transformations create new <pic> tags
+    // Set to 0 for unlimited (not recommended)
+    maxImageGenerationsPerMessage: 1,
     // Prompt injection configuration
     promptInjection: {
         // Whether prompt injection is enabled
@@ -181,6 +185,9 @@ function updateUI() {
             'checked',
             extension_settings[extensionName].processEditedMessages !== false, // Default to true
         );
+        $('#max_image_generations_per_message').val(
+            extension_settings[extensionName].maxImageGenerationsPerMessage || 1, // Default to 1
+        );
     }
 }
 
@@ -250,6 +257,12 @@ async function loadSettings() {
         if (extension_settings[extensionName].processEditedMessages === undefined) {
             extension_settings[extensionName].processEditedMessages =
                 defaultSettings.processEditedMessages;
+        }
+
+        // Ensure maxImageGenerationsPerMessage property exists
+        if (extension_settings[extensionName].maxImageGenerationsPerMessage === undefined) {
+            extension_settings[extensionName].maxImageGenerationsPerMessage =
+                defaultSettings.maxImageGenerationsPerMessage;
         }
     }
 
@@ -360,6 +373,16 @@ async function createSettings(settingsHtml) {
     $('#process_edited_messages').on('change', function () {
         extension_settings[extensionName].processEditedMessages =
             $(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    // Max image generations per message input
+    // Prevents infinite loops when regex transformations create new <pic> tags
+    $('#max_image_generations_per_message').on('input', function () {
+        const value = parseInt(String($(this).val()));
+        extension_settings[extensionName].maxImageGenerationsPerMessage = isNaN(value) || value < 0
+            ? 1
+            : value;
         saveSettingsDebounced();
     });
 
@@ -581,6 +604,15 @@ eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
         const messageIdentifier = `msg_${messageId}`;
         processedMessages.delete(messageIdentifier);
 
+        // Reset the generation count when message is edited, so new <pic> tags can be processed
+        // This allows users to add new <pic> tags via edit and have them processed
+        const context = getContext();
+        const message = context.chat[messageId];
+        if (message && message.extra) {
+            message.extra.image_generation_count = 0;
+            console.log(`[${extensionName}] Reset generation count for edited message ${messageId}`);
+        }
+
         // Use a small delay to ensure the message is fully updated
         setTimeout(() => {
             handleIncomingMessage(messageId);
@@ -776,6 +808,33 @@ async function handleIncomingMessage(messageId) {
     }
 
     console.log(`[${extensionName}] Found ${matches.length} matches:`, matches);
+
+    // If no matches found, return early
+    if (matches.length === 0) {
+        console.log(`[${extensionName}] No image tags found in message ${messageIndex}`);
+        return;
+    }
+
+    // CRITICAL: Check if we've already generated images for this message the maximum number of times
+    // This prevents infinite loops when regex transformations create new <pic> tags
+    const maxGenerations = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+    if (maxGenerations > 0) {
+        // Initialize message.extra if it doesn't exist
+        if (!message.extra) {
+            message.extra = {};
+        }
+        const generationCount = message.extra.image_generation_count || 0;
+
+        if (generationCount >= maxGenerations) {
+            console.log(`[${extensionName}] Message ${messageIndex} has already generated images ${generationCount} time(s) (max: ${maxGenerations}), skipping to prevent infinite loop`);
+            return;
+        }
+
+        // Increment the generation count BEFORE processing
+        // This prevents re-processing even if events are triggered during image generation
+        message.extra.image_generation_count = generationCount + 1;
+        console.log(`[${extensionName}] Generation count for message ${messageIndex}: ${message.extra.image_generation_count}/${maxGenerations}`);
+    }
 
     if (matches.length > 0) {
         // Delay image generation to ensure the message is displayed first

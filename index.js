@@ -872,13 +872,34 @@ async function handleIncomingMessage(messageId) {
     }
 
     if (matches.length > 0) {
+        // Calculate how many images per tag based on the viewer type
+        // This must be done before the toast notification to show the correct total count
+        const insertType = extension_settings[extensionName].insertType;
+        let imagesPerTag = 1; // Default: 1 image per tag
+
+        if (insertType === INSERT_TYPE.INLINE) {
+            // INLINE mode always uses swipe image viewer
+            imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+        } else if (insertType === INSERT_TYPE.REPLACE) {
+            const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
+            const useMultipleViews = extension_settings[extensionName].useMultipleImageViews === true;
+
+            // Only use multiple images if we're using the swipe image viewer (not simple <img> tags or multiple separate viewers)
+            if (useImageViewer && !useMultipleViews) {
+                imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+            }
+        }
+        // For NEW_MESSAGE mode or other cases, always use 1 image per tag
+
+        // Calculate total number of images to generate
+        const totalImagesToGenerate = matches.length * imagesPerTag;
+
         // Delay image generation to ensure the message is displayed first
         // This prevents blocking the UI rendering
         // Note: Message is already marked as processed above to prevent infinite loops
         setTimeout(async () => {
             try {
-                toastr.info(`Generating ${matches.length} images...`);
-                const insertType = extension_settings[extensionName].insertType;
+                toastr.info(`Generating ${totalImagesToGenerate} images...`);
 
                 // Initialize message.extra for image insertion
                 if (!message.extra) {
@@ -936,25 +957,7 @@ async function handleIncomingMessage(messageId) {
                 // This allows us to process all images and then update the UI once at the end
                 const imageGenerationTasks = [];
 
-                // Determine how many images per tag based on the viewer type
-                // Multiple images per tag only work with the swipe image viewer
-                // (INLINE mode or REPLACE mode with image viewer enabled and multiple views disabled)
-                let imagesPerTag = 1; // Default: 1 image per tag
-
-                if (insertType === INSERT_TYPE.INLINE) {
-                    // INLINE mode always uses swipe image viewer
-                    imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
-                } else if (insertType === INSERT_TYPE.REPLACE) {
-                    const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
-                    const useMultipleViews = extension_settings[extensionName].useMultipleImageViews === true;
-
-                    // Only use multiple images if we're using the swipe image viewer (not simple <img> tags or multiple separate viewers)
-                    if (useImageViewer && !useMultipleViews) {
-                        imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
-                    }
-                }
-                // For NEW_MESSAGE mode or other cases, always use 1 image per tag
-
+                // imagesPerTag was already calculated above before the toast notification
                 for (const match of matches) {
                     // Extract the prompt from the first capture group
                     const prompt =
@@ -972,7 +975,7 @@ async function handleIncomingMessage(messageId) {
                 }
 
                 // Generate all images first, then update UI once
-                // If generationCountPerTag > 1, generate multiple images for each tag
+                // If imagesPerTag > 1, generate multiple images for each tag
                 const generatedImages = [];
                 for (const task of imageGenerationTasks) {
                     const count = task.count || 1; // Default to 1 if not specified
@@ -1356,8 +1359,10 @@ async function handleIncomingMessage(messageId) {
                         await context.saveChat();
                     }
                 }
+                // Show success message with actual number of generated images
+                const actualGeneratedCount = generatedImages.length;
                 toastr.success(
-                    `${matches.length} images generated successfully`,
+                    `${actualGeneratedCount} image${actualGeneratedCount !== 1 ? 's' : ''} generated successfully`,
                 );
             } catch (error) {
                 toastr.error(`Image generation error: ${error}`);

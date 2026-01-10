@@ -936,9 +936,24 @@ async function handleIncomingMessage(messageId) {
                 // This allows us to process all images and then update the UI once at the end
                 const imageGenerationTasks = [];
 
-                // Process each matched image tag and collect generation tasks
-                // Use maxImageGenerationsPerMessage to determine how many images per tag
-                const imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+                // Determine how many images per tag based on the viewer type
+                // Multiple images per tag only work with the swipe image viewer
+                // (INLINE mode or REPLACE mode with image viewer enabled and multiple views disabled)
+                let imagesPerTag = 1; // Default: 1 image per tag
+
+                if (insertType === INSERT_TYPE.INLINE) {
+                    // INLINE mode always uses swipe image viewer
+                    imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+                } else if (insertType === INSERT_TYPE.REPLACE) {
+                    const useImageViewer = extension_settings[extensionName].replaceModeUseImageViewer !== false; // Default to true
+                    const useMultipleViews = extension_settings[extensionName].useMultipleImageViews === true;
+
+                    // Only use multiple images if we're using the swipe image viewer (not simple <img> tags or multiple separate viewers)
+                    if (useImageViewer && !useMultipleViews) {
+                        imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+                    }
+                }
+                // For NEW_MESSAGE mode or other cases, always use 1 image per tag
 
                 for (const match of matches) {
                     // Extract the prompt from the first capture group
@@ -952,7 +967,7 @@ async function handleIncomingMessage(messageId) {
                     imageGenerationTasks.push({
                         match: match,
                         prompt: prompt,
-                        count: imagesPerTag, // Use the setting for how many images to generate per tag
+                        count: imagesPerTag, // Use the calculated count based on viewer type
                     });
                 }
 

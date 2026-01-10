@@ -110,6 +110,7 @@ const defaultSettings = {
     // When enabled, adding <pic> tags to existing messages via edit will trigger image generation
     processEditedMessages: true,
     // Maximum number of times images can be generated for a single message (default: 1)
+    // Also determines how many images are generated per <pic> tag
     // This prevents infinite loops when regex transformations create new <pic> tags
     // Set to 0 for unlimited (not recommended)
     maxImageGenerationsPerMessage: 1,
@@ -377,6 +378,7 @@ async function createSettings(settingsHtml) {
     });
 
     // Max image generations per message input
+    // Also determines how many images are generated per <pic> tag
     // Prevents infinite loops when regex transformations create new <pic> tags
     $('#max_image_generations_per_message').on('input', function () {
         const value = parseInt(String($(this).val()));
@@ -935,6 +937,9 @@ async function handleIncomingMessage(messageId) {
                 const imageGenerationTasks = [];
 
                 // Process each matched image tag and collect generation tasks
+                // Use maxImageGenerationsPerMessage to determine how many images per tag
+                const imagesPerTag = extension_settings[extensionName].maxImageGenerationsPerMessage || 1;
+
                 for (const match of matches) {
                     // Extract the prompt from the first capture group
                     const prompt =
@@ -943,38 +948,46 @@ async function handleIncomingMessage(messageId) {
                         continue;
                     }
 
+                    // Add the task - each tag generates imagesPerTag images
                     imageGenerationTasks.push({
                         match: match,
                         prompt: prompt,
+                        count: imagesPerTag, // Use the setting for how many images to generate per tag
                     });
                 }
 
                 // Generate all images first, then update UI once
+                // If generationCountPerTag > 1, generate multiple images for each tag
                 const generatedImages = [];
                 for (const task of imageGenerationTasks) {
-                    console.log(`[${extensionName}] Generating image with prompt: ${task.prompt}`);
+                    const count = task.count || 1; // Default to 1 if not specified
+                    console.log(`[${extensionName}] Generating ${count} image(s) with prompt: ${task.prompt}`);
 
-                    // Call the Stable Diffusion slash command to generate the image
-                    // @ts-ignore
-                    const result = await SlashCommandParser.commands[
-                        'sd'
-                    ].callback(
-                        {
-                            // quiet: 'true' suppresses toast notifications (except for NEW_MESSAGE mode)
-                            quiet:
-                                insertType === INSERT_TYPE.NEW_MESSAGE
-                                    ? 'false'
-                                    : 'true',
-                        },
-                        task.prompt,
-                    );
+                    // Generate the image count times
+                    for (let i = 0; i < count; i++) {
+                        // Call the Stable Diffusion slash command to generate the image
+                        // @ts-ignore
+                        const result = await SlashCommandParser.commands[
+                            'sd'
+                        ].callback(
+                            {
+                                // quiet: 'true' suppresses toast notifications (except for NEW_MESSAGE mode)
+                                quiet:
+                                    insertType === INSERT_TYPE.NEW_MESSAGE
+                                        ? 'false'
+                                        : 'true',
+                            },
+                            task.prompt,
+                        );
 
-                    if (typeof result === 'string' && result.trim().length > 0) {
-                        generatedImages.push({
-                            url: result,
-                            prompt: task.prompt,
-                            match: task.match,
-                        });
+                        if (typeof result === 'string' && result.trim().length > 0) {
+                            generatedImages.push({
+                                url: result,
+                                prompt: task.prompt,
+                                match: task.match,
+                            });
+                            console.log(`[${extensionName}] Generated image ${i + 1}/${count} for prompt: ${task.prompt.substring(0, 50)}...`);
+                        }
                     }
                 }
 

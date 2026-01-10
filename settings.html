@@ -86,10 +86,10 @@
         </div>
         <div class="flex-container flexnowrap">
             <label for="max_image_generations_per_message" class="flex1" data-i18n="Max Image Generations Per Message">Max Image Generations Per Message</label>
-            <input id="max_image_generations_per_message" class="text_pole widthUnset" type="number" min="0" max="10">
+            <input id="max_image_generations_per_message" class="text_pole widthUnset" type="number" min="0" max="20">
         </div>
         <div class="text_pole_dropdown">
-            <small data-i18n="Maximum number of times images can be generated for a single message. Prevents infinite loops when regex transformations create new &lt;pic&gt; tags. Set to 0 for unlimited (not recommended). Default: 1.">Maximum number of times images can be generated for a single message. Prevents infinite loops when regex transformations create new &lt;pic&gt; tags. Set to 0 for unlimited (not recommended). Default: 1.</small>
+            <small data-i18n="Maximum number of times images can be generated for a single message (prevents infinite loops). Also determines how many images are generated per &lt;pic&gt; tag. Set to 0 for unlimited (not recommended). Default: 1.">Maximum number of times images can be generated for a single message (prevents infinite loops). Also determines how many images are generated per &lt;pic&gt; tag. Set to 0 for unlimited (not recommended). Default: 1.</small>
         </div>
     </div>
 </div>

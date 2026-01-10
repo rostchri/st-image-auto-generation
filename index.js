@@ -1073,29 +1073,23 @@ async function handleIncomingMessage(messageId) {
                             if (useMultipleViews && generatedImages.length > 1) {
                                 // Use multiple separate image viewers: Replace each <pic> tag with an inline image viewer
                                 // Each image gets its own viewer at the position of the original tag
+                                // If regex transformations were applied, we need to work with the transformed message
+                                let messageTextToProcess = message.mes;
+                                if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+                                    messageTextToProcess = getRegexedString(message.mes, regexPlacement, {
+                                        characterOverride: message.name,
+                                        isMarkdown: false,
+                                        depth: depth,
+                                    });
+                                }
+
                                 for (const img of generatedImages) {
                                     const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
                                     if (!originalTag) {
                                         continue;
-                                    }
-
-                                    // If regex transformations are enabled, we need to find the tag in the regex-transformed message
-                                    let tagToReplace = originalTag;
-
-                                    if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
-                                        const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-                                        const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
-                                        const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
-
-                                        const regexedMes = getRegexedString(message.mes, regexPlacement, {
-                                            characterOverride: message.name,
-                                            isMarkdown: false,
-                                            depth: depth,
-                                        });
-
-                                        tagToReplace = regexedMes.includes(originalTag)
-                                            ? originalTag
-                                            : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
                                     }
 
                                     // Replace the tag with a special placeholder that will be converted to an image viewer
@@ -1105,8 +1099,11 @@ async function handleIncomingMessage(messageId) {
                                     // This allows multiple viewers in one message
                                     const imageViewerPlaceholder = `<div class="inline-image-viewer" style="display: inline-block; margin: 4px;"><img src="${escapedUrl}" title="${escapedPrompt}" onclick="window.open('${escapedUrl}', '_blank')"></div>`;
 
-                                    message.mes = message.mes.replace(tagToReplace, imageViewerPlaceholder);
+                                    messageTextToProcess = messageTextToProcess.replace(originalTag, imageViewerPlaceholder);
                                 }
+
+                                // Update message.mes with the processed text
+                                message.mes = messageTextToProcess;
 
                                 // Save the chat first to persist the message changes
                                 await context.saveChat();
@@ -1148,33 +1145,33 @@ async function handleIncomingMessage(messageId) {
                                 // This provides zoom, prompt display, and seed regeneration features
 
                                 // Remove all <pic> tags from the message text
+                                // If regex transformations were applied, we need to work with the transformed message
+                                // and then update message.mes with the result
+                                let messageTextToProcess = message.mes;
+                                if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                    // Use the regex-transformed message for replacement
+                                    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+                                    messageTextToProcess = getRegexedString(message.mes, regexPlacement, {
+                                        characterOverride: message.name,
+                                        isMarkdown: false,
+                                        depth: depth,
+                                    });
+                                }
+
                                 for (const img of generatedImages) {
                                     const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
                                     if (!originalTag) {
                                         continue;
                                     }
 
-                                    // If regex transformations are enabled, we need to find the tag in the regex-transformed message
-                                    let tagToReplace = originalTag;
-
-                                    if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
-                                        const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-                                        const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
-                                        const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
-
-                                        const regexedMes = getRegexedString(message.mes, regexPlacement, {
-                                            characterOverride: message.name,
-                                            isMarkdown: false,
-                                            depth: depth,
-                                        });
-
-                                        tagToReplace = regexedMes.includes(originalTag)
-                                            ? originalTag
-                                            : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
-                                    }
-
-                                    message.mes = message.mes.replace(tagToReplace, '');
+                                    // Replace the tag in the processed message text
+                                    messageTextToProcess = messageTextToProcess.replace(originalTag, '');
                                 }
+
+                                // Update message.mes with the processed text
+                                message.mes = messageTextToProcess;
 
                                 // Add all images to message.extra to use SillyTavern's image viewer
                                 if (!message.extra) {
@@ -1271,29 +1268,23 @@ async function handleIncomingMessage(messageId) {
                             );
                         } else {
                             // Use simple <img> tags: Replace each <pic> tag with an <img> tag
+                            // If regex transformations were applied, we need to work with the transformed message
+                            let messageTextToProcess = message.mes;
+                            if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
+                                const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
+                                const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
+                                const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
+                                messageTextToProcess = getRegexedString(message.mes, regexPlacement, {
+                                    characterOverride: message.name,
+                                    isMarkdown: false,
+                                    depth: depth,
+                                });
+                            }
+
                             for (const img of generatedImages) {
                                 const originalTag = typeof img.match?.[0] === 'string' ? img.match[0] : '';
                                 if (!originalTag) {
                                     continue;
-                                }
-
-                                // If regex transformations are enabled, we need to find the tag in the regex-transformed message
-                                let tagToReplace = originalTag;
-
-                                if (extension_settings[extensionName].applyRegexTransformations && regexPlacement) {
-                                    const usableMessages = context.chat.map((x, index) => ({ message: x, index: index })).filter(x => !x.message.is_system);
-                                    const indexOf = usableMessages.findIndex(x => x.index === messageIndex);
-                                    const depth = messageIndex >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
-
-                                    const regexedMes = getRegexedString(message.mes, regexPlacement, {
-                                        characterOverride: message.name,
-                                        isMarkdown: false,
-                                        depth: depth,
-                                    });
-
-                                    tagToReplace = regexedMes.includes(originalTag)
-                                        ? originalTag
-                                        : regexedMes.match(new RegExp(`<pic[^>]*prompt="${escapeRegex(img.prompt)}"[^>]*>`, 'g'))?.[0] || originalTag;
                                 }
 
                                 const escapedUrl = escapeHtmlAttribute(img.url);
@@ -1301,18 +1292,18 @@ async function handleIncomingMessage(messageId) {
                                 // title attribute is sufficient for hover tooltip, no need for redundant alt
                                 const newImageTag = `<img src="${escapedUrl}" title="${escapedPrompt}">`;
 
-                                message.mes = message.mes.replace(
-                                    tagToReplace,
-                                    newImageTag,
-                                );
+                                messageTextToProcess = messageTextToProcess.replace(originalTag, newImageTag);
                             }
 
-                            // Update the message display using updateMessageBlock (only once)
-                            updateMessageBlock(
-                                messageIndex,
-                                message,
-                            );
+                            // Update message.mes with the processed text
+                            message.mes = messageTextToProcess;
                         }
+
+                        // Update the message display using updateMessageBlock (only once)
+                        updateMessageBlock(
+                            messageIndex,
+                            message,
+                        );
 
                         // Set a flag to indicate we're updating the message ourselves
                         // This prevents the MESSAGE_UPDATED event listener from resetting the generation count

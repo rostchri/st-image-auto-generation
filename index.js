@@ -604,13 +604,44 @@ eventSource.on(event_types.MESSAGE_UPDATED, function (messageId) {
         const messageIdentifier = `msg_${messageId}`;
         processedMessages.delete(messageIdentifier);
 
-        // Reset the generation count when message is edited, so new <pic> tags can be processed
+        // Reset the generation count when message is edited by the USER, so new <pic> tags can be processed
         // This allows users to add new <pic> tags via edit and have them processed
+        // IMPORTANT: Only reset if we're not currently processing this message ourselves
+        // (to prevent infinite loops when we emit MESSAGE_UPDATED after generating images)
         const context = getContext();
         const message = context.chat[messageId];
         if (message && message.extra) {
-            message.extra.image_generation_count = 0;
-            console.log(`[${extensionName}] Reset generation count for edited message ${messageId}`);
+            // Check if we're currently processing this message (indicated by processedMessages Set)
+            const messageIdentifier = `msg_${messageId}`;
+            const isCurrentlyProcessing = processedMessages.has(messageIdentifier);
+
+            // Store the original message text to detect if it was actually edited by the user
+            // If the message text hasn't changed, it's likely our own update, not a user edit
+            if (!message.extra._last_processed_mes) {
+                message.extra._last_processed_mes = message.mes;
+            }
+            const messageTextChanged = message.extra._last_processed_mes !== message.mes;
+
+            // Check if we're updating the message ourselves (indicated by _extension_updating flag)
+            const isExtensionUpdate = message.extra._extension_updating === true;
+
+            // Only reset if:
+            // 1. We're NOT currently processing (meaning it's not our own update)
+            // 2. We're NOT updating the message ourselves (indicated by flag)
+            // 3. The message text has changed (meaning it's a real user edit, not just our extra update)
+            if (!isCurrentlyProcessing && !isExtensionUpdate && messageTextChanged) {
+                message.extra.image_generation_count = 0;
+                message.extra._last_processed_mes = message.mes; // Update stored text
+                console.log(`[${extensionName}] Reset generation count for user-edited message ${messageId} (message text changed)`);
+            } else {
+                if (isCurrentlyProcessing) {
+                    console.log(`[${extensionName}] Skipping generation count reset for message ${messageId} (currently being processed by extension)`);
+                } else if (isExtensionUpdate) {
+                    console.log(`[${extensionName}] Skipping generation count reset for message ${messageId} (extension is updating message)`);
+                } else if (!messageTextChanged) {
+                    console.log(`[${extensionName}] Skipping generation count reset for message ${messageId} (message text unchanged, likely extension update)`);
+                }
+            }
         }
 
         // Use a small delay to ensure the message is fully updated
@@ -833,6 +864,8 @@ async function handleIncomingMessage(messageId) {
         // Increment the generation count BEFORE processing
         // This prevents re-processing even if events are triggered during image generation
         message.extra.image_generation_count = generationCount + 1;
+        // Store the current message text to detect user edits later
+        message.extra._last_processed_mes = message.mes;
         console.log(`[${extensionName}] Generation count for message ${messageIndex}: ${message.extra.image_generation_count}/${maxGenerations}`);
     }
 
@@ -1281,10 +1314,24 @@ async function handleIncomingMessage(messageId) {
                             );
                         }
 
+                        // Set a flag to indicate we're updating the message ourselves
+                        // This prevents the MESSAGE_UPDATED event listener from resetting the generation count
+                        if (!message.extra) {
+                            message.extra = {};
+                        }
+                        message.extra._extension_updating = true;
+
                         await eventSource.emit(
                             event_types.MESSAGE_UPDATED,
                             messageIndex,
                         );
+
+                        // Clear the flag after a short delay to allow event listeners to process
+                        setTimeout(() => {
+                            if (message.extra) {
+                                delete message.extra._extension_updating;
+                            }
+                        }, 100);
 
                         // Save the chat to persist the changes
                         await context.saveChat();

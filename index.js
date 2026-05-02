@@ -119,13 +119,75 @@ const defaultSettings = {
         // Whether prompt injection is enabled
         enabled: true,
         // The prompt template that will be injected into the chat completion
-        // This instructs the AI to include <pic> tags in its responses
+        // This instructs the AI to include <pic> tags in its responses.
+        //
+        // Format rules embedded in the prompt:
+        //   - DOUBLE quotes for the attribute: prompt="..."
+        //   - SINGLE quotes inside the JSON value (no nested double quotes!)
+        //   - One <pic> tag per image — separate tags for separate scenes
+        //
+        // Why this matters: the default regex below matches the prompt value
+        // as `[^"]+`, i.e. up to the next double-quote. If the JSON inside
+        // contains a stray `"`, the attribute closes too early. Keeping the
+        // outer attribute double-quoted and the JSON single-quoted avoids
+        // any conflict and lets multiple <pic> tags be matched independently.
         prompt: `<image_generation>
-You must insert a <pic prompt="example prompt"> at end of the reply. Prompts are used for stable diffusion image generation, based on the plot and character to output appropriate prompts to generate captivating images.
+Insert one or more <pic prompt="..."> tags in your reply. Each tag triggers ONE Stable-Diffusion image. For multiple distinct visual moments, use SEPARATE tags — never combine multiple scenes into one prompt.
+
+Format rules:
+- Wrap the prompt in DOUBLE quotes: prompt="..."
+- Use SINGLE quotes inside the JSON value (no nested double quotes!)
+- Self-closing or open form both work: <pic prompt="..."> or <pic prompt="..." />
+
+JSON schema for the prompt value:
+{
+  'perspective': 'string',          // POV / camera setup
+  'subject': 'string',              // Dense description of primary subject(s) and action, frame-centered
+  'environment': 'string',          // Surroundings, setting, background
+  'mood': 'string',                 // Lighting, color palette, atmosphere, weather
+  'camera': 'string',               // DOF, shot angle, lens, framing
+  'style': 'string',                // Art direction. Anime if subject(s) clearly non-human
+  'characters': [                   // Every character visible in frame
+    {
+      'name': 'string',
+      'features': 'string',         // Age, ethnicity, face, hair — dense comma-separated
+      'body_features': 'string',    // Sizes/shapes as 'thighs: soft, tan. breasts: small, triangle.'
+      'attire': 'string',           // Clothing/accessories with colors
+      'action': 'string'            // Limb positions, joint angles, distance in cm/m
+    }
+  ]
+}
+
+Perspective guidance:
+- Default: first-person POV from the user, aimed at the visually central character/body part.
+- For additional tags in the same reply: feel free to reverse perspective for variety.
+
+Example (single tag — keep all values inside ONE pair of double quotes):
+<pic prompt="{'perspective': 'first person', 'subject': 'Riley standing chest-deep in pool, purple bikini, eye contact, gentle smile', 'environment': 'private villa pool, golden-hour reflections', 'mood': 'warm low sun, calm intimate atmosphere', 'camera': 'POV at waterline, slight low angle ~10deg, medium shot, 35mm f/2.0 shallow DOF', 'style': 'photorealistic cinematic, natural golden hour, soft bokeh, no text', 'characters': [{'name': 'Riley Prescott', 'features': '19yo, hazel eyes with green/gold shimmer, long damp dark hair, lightly tanned, sincere expression', 'body_features': 'height 190cm, athletic muscular, broad shoulders, defined arms, visible six-pack', 'attire': 'purple tank-top bikini, fitted top with wide straps, high-cut bottoms', 'action': 'distance 1.2m, upright, water at mid-sternum, head forward slight 5deg right tilt, both forearms resting on water surface, hands relaxed open 15cm apart, gentle sincere smile'}]}">
 </image_generation>`,
-        // Regular expression to match <pic> tags in AI messages
-        // Must capture the prompt as the first capture group (in parentheses)
-        regex: '/<pic[^>]*\\sprompt="([^"]*)"[^>]*?>/g',
+        // Regular expression to match <pic> tags in AI messages.
+        //
+        // Capture group 1 = the JSON prompt value (everything between the two
+        // double quotes of the prompt= attribute).
+        //
+        // Why this exact pattern:
+        //   <pic           — literal opener
+        //   \s+            — at least one whitespace (forbids "<pict" / "<picnic" matches)
+        //   prompt="       — literal attribute name + opening double quote
+        //   ([^"]+)        — capture group 1: one or more non-double-quote chars
+        //                    Bounded by the next " — won't span tags as long as the
+        //                    JSON inside uses single quotes. Matches each <pic>
+        //                    tag independently in a multi-tag message.
+        //   "              — literal closing double quote of attribute
+        //   \s*\/?>        — optional whitespace + optional self-close + closing >
+        //   /g             — global, collect all matches via matchAll
+        //
+        // The previous default `/<pic[^>]*\sprompt="([^"]*)"[^>]*?>/g` had a
+        // greedy `[^>]*` opener that interacted poorly with templates where the
+        // attribute used single quotes outside (allowing the engine to span
+        // multiple tags into a single match). The simpler pattern below avoids
+        // that class of pitfalls entirely.
+        regex: '/<pic\\s+prompt="([^"]+)"\\s*\\/?>/g',
         // Position where the prompt should be injected: deep_system, deep_user, or deep_assistant
         position: 'deep_system',
         // Depth: 0 means add to the end, >0 means insert from the end at the specified position

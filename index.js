@@ -18,7 +18,7 @@ import {
     getRequestHeaders,
 } from '../../../../script.js';
 import { appendMediaToMessage } from '../../../../script.js';
-import { regexFromString } from '../../../utils.js';
+import { regexFromString, saveBase64AsFile } from '../../../utils.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 
 // Import regex engine functions to apply regex transformations before searching for tags
@@ -106,7 +106,9 @@ function escapeRegex(str) {
  * `extension_settings.comfyui_workflows.{workflow, params}` gelesen — der
  * <pic>-Prompt ueberschreibt nur das `prompt`-Feld.
  *
- * Returns: data-URL als String bei Erfolg, leerer String bei Fehler.
+ * Returns: URL als String bei Erfolg (ueber saveBase64AsFile auf Disk
+ * gespeichert; analog zum NanoGPT-Pfad), data-URI als Fallback, leerer
+ * String bei Fehler.
  */
 async function generateViaComfyUiWorkflows(prompt) {
     const cfg = (extension_settings && extension_settings.comfyui_workflows) || {};
@@ -145,8 +147,20 @@ async function generateViaComfyUiWorkflows(prompt) {
             console.error(`[${extensionName}] ComfyUI Workflows response without images`, data);
             return '';
         }
-        // Pro Convention liefert comfyui-api PNG-base64.
-        return `data:image/png;base64,${data.images[0]}`;
+        // Statt das base64 direkt als data:URI in die Chat-Message zu schreiben
+        // (was chat.json um Megabytes pro Bild blaeht), speichert ST das Bild
+        // serverseitig ueber saveBase64AsFile und gibt eine URL zurueck — analog
+        // zum NanoGPT-Pfad in SillyTavern's eigener stable-diffusion extension.
+        try {
+            const context = getContext();
+            const charName = context.characters?.[context.characterId]?.name || 'comfyui-workflows';
+            const fileName = `${workflow}_${Date.now()}`;
+            const url = await saveBase64AsFile(data.images[0], charName, fileName, 'png');
+            return url;
+        } catch (saveErr) {
+            console.warn(`[${extensionName}] saveBase64AsFile failed, falling back to data-URI:`, saveErr);
+            return `data:image/png;base64,${data.images[0]}`;
+        }
     } catch (e) {
         console.error(`[${extensionName}] ComfyUI Workflows fetch fehlgeschlagen:`, e);
         return '';

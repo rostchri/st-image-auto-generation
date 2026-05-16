@@ -85,56 +85,56 @@ function escapeRegex(str) {
 /**
  * Generiert ein Bild ueber die self-hosted ComfyUI backend (st-comfyui-workflows extension).
  *
- * **Konfiguration kommt komplett aus der `st-comfyui-workflows`-Extension** —
- * wir lesen `extension_settings.comfyui_workflows.{base_url, workflow}`. Diese
- * Extension hier hat NUR den Enable-Toggle, keine eigene base_url/workflow-
- * Settings, damit der User nicht zwei Stellen parallel pflegen muss.
+ * Geht jetzt ueber den SillyTavern-Backend-Proxy (st-ext-server-loader →
+ * st-comfyui-workflows/server). Der Browser fetcht same-origin gegen
+ * `/api/plugins/st-ext-server-loader/ext/st-comfyui-workflows/workflow/<name>`.
+ * Das ST-Backend macht dann den eigentlichen HTTP-Call zu comfyui-api
+ * ueber ein internes Netz (Tailscale, Docker-Bridge, etc.). Vorteile:
  *
- * Aufruf-Pfad: POST <base_url>/workflow/<name> mit {input:{prompt}}.
- * Response: {images:[base64]} — wir wrappen das base64 in eine
- * `data:image/png;base64,...`-URL die im SillyTavern-Image-Viewer wie
- * eine normale Image-URL angezeigt wird.
+ *   - Kein CORS / keine Cookie-Magie
+ *   - Zentrales Log im ST-Container
+ *   - comfyui-api muss nicht ueber TLS / Authelia erreichbar sein
  *
- * Setzt explizit credentials:'include' damit der Authelia-Cookie
- * cross-subdomain (st.* -> comfyui.*) durchgeht — sonst 401.
+ * Setup-Voraussetzungen (einmalig pro ST-Instanz):
+ *   1. `st-ext-server-loader` als ST-Plugin installiert
+ *   2. `SILLYTAVERN_ENABLESERVERPLUGINS=true` und `COMFYUI_BASE_URL` env-vars
+ *   3. `st-comfyui-workflows`-Extension installiert (liefert das server/
+ *      Verzeichnis, das vom Loader gepickt wird)
+ *
+ * Der Workflow + die per-Workflow-Parameter werden weiter aus
+ * `extension_settings.comfyui_workflows.{workflow, params}` gelesen — der
+ * <pic>-Prompt ueberschreibt nur das `prompt`-Feld.
  *
  * Returns: data-URL als String bei Erfolg, leerer String bei Fehler.
  */
 async function generateViaComfyUiWorkflows(prompt) {
-    // Source-of-Truth: die st-comfyui-workflows-Extension (extension_settings.comfyui_workflows)
     const cfg = (extension_settings && extension_settings.comfyui_workflows) || {};
-    const baseUrl = (cfg.base_url || '').replace(/\/$/, '');
     const workflow = cfg.workflow || '';
-    if (!baseUrl || !workflow) {
-        const msg = `[${extensionName}] ComfyUI Workflows config fehlt — bitte in der "ComfyUI Workflows"-Extension Base-URL + Workflow setzen (extension_settings.comfyui_workflows).`;
+    if (!workflow) {
+        const msg = `[${extensionName}] kein Workflow ausgewaehlt — bitte in "ComfyUI Workflows"-Extension einen Workflow setzen.`;
         console.error(msg);
         try { toastr.error(msg); } catch (_) { /* toastr optional */ }
         return '';
     }
-    // Per-Workflow saved params (width/height/seed/steps/cfg/sampler etc.) aus
-    // der ComfyUI Workflows-Extension uebernehmen — der Prompt aus <pic>
-    // ueberschreibt nur das `prompt`-Feld. Sonst wuerden Defaults aus dem
-    // Workflow-Schema greifen und die Settings in der ComfyUI Workflows-
-    // Extension waeren wirkungslos.
+    // Per-Workflow saved params (width/height/seed/steps/cfg/sampler etc.) —
+    // der <pic>-Prompt ueberschreibt nur `prompt`. input_image weglassen, das
+    // ist ein per-Render-Wert aus dem Settings-Test (base64-Blob).
     const savedParams = (cfg.params && cfg.params[workflow]) || {};
     const input = { ...savedParams, prompt: String(prompt || '') };
-    // input_image niemals aus saved params nehmen — das ist ein per-Render-Wert
-    // und enthielte einen base64-Blob aus dem Settings-Test. Bei <pic>-Tags gibt
-    // es kein I2I-Bild.
     delete input.input_image;
 
-    const url = `${baseUrl}/workflow/${encodeURIComponent(workflow)}`;
-    console.log(`[${extensionName}] ComfyUI Workflows POST ${url}`, { input });
+    const url = `/api/plugins/st-ext-server-loader/ext/st-comfyui-workflows/workflow/${encodeURIComponent(workflow)}`;
+    console.log(`[${extensionName}] ComfyUI Workflows (via ST backend) POST ${url}`, { input });
     try {
         const r = await fetch(url, {
             method: 'POST',
-            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ input }),
         });
         if (!r.ok) {
             const text = await r.text().catch(() => '');
             console.error(`[${extensionName}] ComfyUI Workflows HTTP ${r.status} ${url} — ${text.slice(0, 200)}`);
+            try { toastr.error(`ComfyUI Workflows HTTP ${r.status} — siehe Browser-Console`); } catch (_) {}
             return '';
         }
         const data = await r.json();
@@ -142,9 +142,7 @@ async function generateViaComfyUiWorkflows(prompt) {
             console.error(`[${extensionName}] ComfyUI Workflows response without images`, data);
             return '';
         }
-        // Pro Convention liefert comfyui-api PNG-base64. Wenn der gewaehlte
-        // Workflow ein anderes Format hat (webp/mp4), waere `data.stats`
-        // bzw. ein zukuenftiges `output_format`-Feld die Quelle der MIME.
+        // Pro Convention liefert comfyui-api PNG-base64.
         return `data:image/png;base64,${data.images[0]}`;
     } catch (e) {
         console.error(`[${extensionName}] ComfyUI Workflows fetch fehlgeschlagen:`, e);

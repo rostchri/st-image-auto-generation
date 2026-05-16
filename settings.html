@@ -1,95 +1,128 @@
-<div class="inline-drawer">
-    <div class="inline-drawer-toggle inline-drawer-header">
-        <b data-i18n="Image Auto Generation">Image Auto Generation</b>
-        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-    </div>
-    <div class="inline-drawer-content">
-        <div class="flex-container flexnowrap">
-            <label for="image_generation_insert_type" class="flex1" data-i18n="Image Insert Type">Image Insert Type</label>
-            <select id="image_generation_insert_type" class="text_pole widthNatural margin0">
-                <option data-i18n="Insert In Current Message" value="inline">Insert In Current Message</option>
-                <option data-i18n="Inline Replace Mode" value="replace">Inline Replace Mode</option>
-                <option data-i18n="Create New Message" value="new">Create New Message</option>
-                <option data-i18n="Disable" value="disabled">Disable</option>
-            </select>
+<!--
+    SillyTavern Image Auto Generation Extension Settings
+-->
+<div id="image_auto_generation_settings" class="extension_settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b data-i18n="Image Auto Generation">Image Auto Generation</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
-        <div class="flex-container flexnowrap">
-            <label class="checkbox_label" for="prompt_injection_enabled">
-                <span data-i18n="Enable Prompt Injection">Enable Prompt Injection</span>
-                <input type="checkbox" id="prompt_injection_enabled" class="checkbox">
-            </label>
-        </div>
-        <div class="">
-            <div><label for="prompt_injection_text" class="flex1" data-i18n="Prompt Template">Prompt Template</label></div>
-            <textarea id="prompt_injection_text" class="text_pole textarea_compact" rows="3" placeholder="Prompt that instruct AI to generate image tag"></textarea>
-        </div>
-        <div class="">
-            <div><label for="prompt_injection_regex" class="flex1" data-i18n="Regex">Regex</label></div>
-            <textarea id="prompt_injection_regex" class="text_pole textarea_compact" rows="2" placeholder="Your regex here"></textarea>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label for="prompt_injection_position" class="flex1" data-i18n="Position">Position</label>
-            <select id="prompt_injection_position" class="text_pole widthNatural margin0">
-                <option value="deep_system" data-i18n="at Depth System">@D ⚙️</option>
-                <option value="deep_user" data-i18n="at Depth User">@D 👤</option>
-                <option value="deep_assistant" data-i18n="at Depth AI">@D 🤖</option>
-            </select>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label for="prompt_injection_depth" class="flex1" data-i18n="Depth">Depth</label>
-            <input id="prompt_injection_depth" class="text_pole widthUnset" type="number" min="0" max="100">
-        </div>
-        <div class="flex-container flexnowrap">
-            <label class="checkbox_label" for="process_user_messages">
-                <span data-i18n="Process User Messages">Process User Messages</span>
-                <input type="checkbox" id="process_user_messages" class="checkbox">
-            </label>
-        </div>
-        <div class="text_pole_dropdown">
-            <small data-i18n="When enabled, the extension will also process &lt;pic&gt; tags in user messages (e.g., from Quick Replies). Default: disabled.">When enabled, the extension will also process &lt;pic&gt; tags in user messages (e.g., from Quick Replies). Default: disabled.</small>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label class="checkbox_label" for="apply_regex_transformations">
-                <span data-i18n="Apply Regex Transformations">Apply Regex Transformations</span>
-                <input type="checkbox" id="apply_regex_transformations" class="checkbox">
-            </label>
-        </div>
-        <div class="text_pole_dropdown">
-            <small data-i18n="When enabled, SillyTavern regex transformations are applied to messages before searching for &lt;pic&gt; tags. Useful if your regex rules transform tags. Default: disabled.">When enabled, SillyTavern regex transformations are applied to messages before searching for &lt;pic&gt; tags. Useful if your regex rules transform tags. Default: disabled.</small>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label class="checkbox_label" for="replace_mode_use_image_viewer">
-                <span data-i18n="Use Image Viewer in Replace Mode">Use Image Viewer in Replace Mode</span>
-                <input type="checkbox" id="replace_mode_use_image_viewer" class="checkbox">
-            </label>
-        </div>
-        <div class="text_pole_dropdown">
-            <small data-i18n="When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration. When disabled, uses simple &lt;img&gt; tags. Default: enabled.">When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration. When disabled, uses simple &lt;img&gt; tags. Default: enabled.</small>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label class="checkbox_label" for="use_multiple_image_views">
-                <span data-i18n="Use Multiple Image Viewers">Use Multiple Image Viewers</span>
-                <input type="checkbox" id="use_multiple_image_views" class="checkbox">
-            </label>
-        </div>
-        <div class="text_pole_dropdown">
-            <small data-i18n="When enabled, each &lt;pic&gt; tag gets its own separate image viewer at that position in the text. When disabled, all images are collected into a single image viewer. Note: Multiple viewers use inline images (click to open), not full SillyTavern image viewer features. Default: disabled.">When enabled, each &lt;pic&gt; tag gets its own separate image viewer at that position in the text. When disabled, all images are collected into a single image viewer. Note: Multiple viewers use inline images (click to open), not full SillyTavern image viewer features. Default: disabled.</small>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label class="checkbox_label" for="process_edited_messages">
-                <span data-i18n="Process Edited Messages">Process Edited Messages</span>
-                <input type="checkbox" id="process_edited_messages" class="checkbox">
-            </label>
-        </div>
-        <div class="text_pole_dropdown">
-            <small data-i18n="When enabled, adding &lt;pic&gt; tags to existing messages via edit will automatically trigger image generation. Default: enabled.">When enabled, adding &lt;pic&gt; tags to existing messages via edit will automatically trigger image generation. Default: enabled.</small>
-        </div>
-        <div class="flex-container flexnowrap">
-            <label for="max_image_generations_per_message" class="flex1" data-i18n="Max Image Generations Per Message">Max Image Generations Per Message</label>
-            <input id="max_image_generations_per_message" class="text_pole widthUnset" type="number" min="0" max="20">
-        </div>
-        <div class="text_pole_dropdown">
-            <small data-i18n="Maximum number of times images can be generated for a single message (prevents infinite loops). Also determines how many images are generated per &lt;pic&gt; tag. Set to 0 for unlimited (not recommended). Default: 1.">Maximum number of times images can be generated for a single message (prevents infinite loops). Also determines how many images are generated per &lt;pic&gt; tag. Set to 0 for unlimited (not recommended). Default: 1.</small>
+        <div class="inline-drawer-content">
+            <div class="extension_settings_block">
+                <label class="checkbox_label" for="image_auto_generation_enabled">
+                    <input id="image_auto_generation_enabled" type="checkbox" />
+                    <span data-i18n="Enable Extension">Enable Extension</span>
+                </label>
+            </div>
+
+            <hr class="sysHR" />
+
+            <div class="extension_settings_block">
+                <label for="image_auto_generation_prompt"><span data-i18n="Prompt Injection">Prompt Injection (will be injected into your chat)</span></label>
+                <textarea id="image_auto_generation_prompt" rows="20" class="text_pole textarea_compact"></textarea>
+                <small data-i18n="This will be injected into your chat as a system message. You can use {{char}} and {{user}} placeholders. The prompt should instruct the AI to use <pic prompt=&quot;...&quot;/> tags to mark places where images should be generated.">This will be injected into your chat as a system message. You can use {{char}} and {{user}} placeholders. The prompt should instruct the AI to use &lt;pic prompt="..."/&gt; tags to mark places where images should be generated.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label for="image_auto_generation_regex"><span data-i18n="Tag Regex">Tag Regex</span></label>
+                <input id="image_auto_generation_regex" type="text" class="text_pole" placeholder="/<pic\s+prompt=&quot;([^&quot;]+)&quot;\s*\/?>/g" />
+                <small data-i18n="Regex pattern to match image tags in chat messages. Must have one capture group for the image prompt. Default matches <pic prompt=&quot;...&quot;/> or <pic prompt=&quot;...&quot;>.">Regex pattern to match image tags in chat messages. Must have one capture group for the image prompt. Default matches &lt;pic prompt="..."/&gt; or &lt;pic prompt="..."&gt;.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label for="image_auto_generation_position" data-i18n="Position">Position</label>
+                <select id="image_auto_generation_position" class="text_pole">
+                    <option value="in_prompt" data-i18n="In Prompt">In Prompt</option>
+                    <option value="in_chat" data-i18n="In Chat">In Chat</option>
+                    <option value="before_prompt" data-i18n="Before Prompt">Before Prompt</option>
+                    <option value="after_prompt" data-i18n="After Prompt">After Prompt</option>
+                    <option value="deep_system" data-i18n="Deep System">Deep System (depth-based, recommended)</option>
+                    <option value="deep_user" data-i18n="Deep User">Deep User</option>
+                    <option value="deep_assistant" data-i18n="Deep Assistant">Deep Assistant</option>
+                </select>
+            </div>
+
+            <div class="extension_settings_block">
+                <label for="image_auto_generation_depth" data-i18n="Depth">Depth (only for deep_*)</label>
+                <input id="image_auto_generation_depth" type="number" min="0" max="100" class="text_pole" />
+            </div>
+
+            <div class="extension_settings_block">
+                <label class="checkbox_label" for="image_auto_generation_process_user_messages">
+                    <input id="image_auto_generation_process_user_messages" type="checkbox" />
+                    <span data-i18n="Process User Messages">Process User Messages</span>
+                </label>
+                <small data-i18n="If enabled, user messages will also be scanned for pic-tags.">If enabled, user messages will also be scanned for pic-tags.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label class="checkbox_label" for="image_auto_generation_process_edited_messages">
+                    <input id="image_auto_generation_process_edited_messages" type="checkbox" />
+                    <span data-i18n="Process Edited Messages">Process Edited Messages</span>
+                </label>
+                <small data-i18n="If enabled, when a message is edited and new pic-tags are added, those will be processed.">If enabled, when a message is edited and new pic-tags are added, those will be processed.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label class="checkbox_label" for="image_auto_generation_apply_regex_transformations">
+                    <input id="image_auto_generation_apply_regex_transformations" type="checkbox" />
+                    <span data-i18n="Apply Regex Transformations">Apply Regex Transformations</span>
+                </label>
+                <small data-i18n="If enabled, ST's regex extension transformations will be applied to the message before searching for pic-tags.">If enabled, ST's regex extension transformations will be applied to the message before searching for pic-tags.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label for="image_auto_generation_insert_type" data-i18n="Insert Type">Insert Type</label>
+                <select id="image_auto_generation_insert_type" class="text_pole">
+                    <option value="DISABLED" data-i18n="Disabled">Disabled (no image insertion)</option>
+                    <option value="REPLACE" data-i18n="Replace">Replace pic-tag with image</option>
+                    <option value="APPEND" data-i18n="Append">Append image after pic-tag</option>
+                </select>
+            </div>
+
+            <div class="extension_settings_block">
+                <label class="checkbox_label" for="image_auto_generation_replace_mode_use_image_viewer">
+                    <input id="image_auto_generation_replace_mode_use_image_viewer" type="checkbox" />
+                    <span data-i18n="Use combined image viewer in REPLACE mode">Use combined image viewer in REPLACE mode</span>
+                </label>
+                <small data-i18n="If enabled (and Insert Type = REPLACE): replaces all pic-tags with a single combined image viewer at the end of the message. Otherwise: each pic-tag is replaced with a simple <img> tag at its position.">If enabled (and Insert Type = REPLACE): replaces all pic-tags with a single combined image viewer at the end of the message. Otherwise: each pic-tag is replaced with a simple &lt;img&gt; tag at its position.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label class="checkbox_label" for="image_auto_generation_use_multiple_image_views">
+                    <input id="image_auto_generation_use_multiple_image_views" type="checkbox" />
+                    <span data-i18n="Use multiple image views">Use multiple image views (one per pic-tag)</span>
+                </label>
+                <small data-i18n="If enabled, each pic-tag gets its own image viewer at its position in the message. Pairs well with maxImageGenerationsPerMessage > 1.">If enabled, each pic-tag gets its own image viewer at its position in the message. Pairs well with maxImageGenerationsPerMessage &gt; 1.</small>
+            </div>
+
+            <div class="extension_settings_block">
+                <label for="image_auto_generation_max_image_generations_per_message" data-i18n="Max Image Generations Per Message">Max Image Generations Per Message</label>
+                <input id="image_auto_generation_max_image_generations_per_message" type="number" min="1" max="10" class="text_pole" />
+                <small data-i18n="Maximum number of pic-tags to process per message. Excess tags are ignored.">Maximum number of pic-tags to process per message. Excess tags are ignored.</small>
+            </div>
+
+            <hr class="sysHR" />
+
+            <div class="extension_settings_block">
+                <h4 data-i18n="ComfyUI Workflows Renderer (Optional)">ComfyUI Workflows Renderer (Optional)</h4>
+                <label class="checkbox_label" for="comfyui_wf_enabled">
+                    <input id="comfyui_wf_enabled" type="checkbox" />
+                    <span data-i18n="Use ComfyUI Workflows renderer">Use ComfyUI Workflows renderer (instead of vanilla SD pipeline)</span>
+                </label>
+                <small data-i18n="When enabled, every <pic>-tag is rendered via the comfyui-api endpoint configured in the separate 'ComfyUI Workflows' extension (settings drawer). Base-URL and Workflow are pulled from there — no duplicate config here. Disabled by default.">When enabled, every &lt;pic&gt;-tag is rendered via the comfyui-api endpoint configured in the separate <b>"ComfyUI Workflows"</b> extension (settings drawer). Base-URL and Workflow are pulled from there — no duplicate config here. Disabled by default.</small>
+                <br />
+                <small id="comfyui_wf_config_hint">Base-URL: (laedt…)  ·  Workflow: (laedt…)</small>
+            </div>
+
+            <hr class="sysHR" />
+
+            <div class="extension_settings_block">
+                <button id="image_auto_generation_reset_defaults" class="menu_button">
+                    <span data-i18n="Reset to Defaults">Reset to Defaults</span>
+                </button>
+                <small data-i18n="Restores all settings (prompt template, regex, position, depth, insert type, viewer options, max generations, processing toggles, promptInjection block) to the productive defaults shipped with the extension.">Restores all settings (prompt template, regex, position, depth, insert type, viewer options, max generations, processing toggles, promptInjection block) to the productive defaults shipped with the extension.</small>
+            </div>
         </div>
     </div>
 </div>

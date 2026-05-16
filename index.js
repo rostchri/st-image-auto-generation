@@ -111,13 +111,26 @@ async function generateViaComfyUiWorkflows(prompt) {
         try { toastr.error(msg); } catch (_) { /* toastr optional */ }
         return '';
     }
+    // Per-Workflow saved params (width/height/seed/steps/cfg/sampler etc.) aus
+    // der ComfyUI Workflows-Extension uebernehmen — der Prompt aus <pic>
+    // ueberschreibt nur das `prompt`-Feld. Sonst wuerden Defaults aus dem
+    // Workflow-Schema greifen und die Settings in der ComfyUI Workflows-
+    // Extension waeren wirkungslos.
+    const savedParams = (cfg.params && cfg.params[workflow]) || {};
+    const input = { ...savedParams, prompt: String(prompt || '') };
+    // input_image niemals aus saved params nehmen — das ist ein per-Render-Wert
+    // und enthielte einen base64-Blob aus dem Settings-Test. Bei <pic>-Tags gibt
+    // es kein I2I-Bild.
+    delete input.input_image;
+
     const url = `${baseUrl}/workflow/${encodeURIComponent(workflow)}`;
+    console.log(`[${extensionName}] ComfyUI Workflows POST ${url}`, { input });
     try {
         const r = await fetch(url, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ input: { prompt: String(prompt || '') } }),
+            body: JSON.stringify({ input }),
         });
         if (!r.ok) {
             const text = await r.text().catch(() => '');

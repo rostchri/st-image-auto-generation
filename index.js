@@ -83,37 +83,98 @@ function escapeRegex(str) {
 }
 
 /**
+ * Generiert ein Bild ueber die self-hosted ComfyUI backend (st-comfyui-workflows extension).
+ *
+ * **Konfiguration kommt komplett aus der `st-comfyui-workflows`-Extension** —
+ * wir lesen `extension_settings.comfyui_workflows.{base_url, workflow}`. Diese
+ * Extension hier hat NUR den Enable-Toggle, keine eigene base_url/workflow-
+ * Settings, damit der User nicht zwei Stellen parallel pflegen muss.
+ *
+ * Aufruf-Pfad: POST <base_url>/workflow/<name> mit {input:{prompt}}.
+ * Response: {images:[base64]} — wir wrappen das base64 in eine
+ * `data:image/png;base64,...`-URL die im SillyTavern-Image-Viewer wie
+ * eine normale Image-URL angezeigt wird.
+ *
+ * Setzt explizit credentials:'include' damit der Authelia-Cookie
+ * cross-subdomain (st.* -> comfyui.*) durchgeht — sonst 401.
+ *
+ * Returns: data-URL als String bei Erfolg, leerer String bei Fehler.
+ */
+async function generateViaComfyUiWorkflows(prompt) {
+    // Source-of-Truth: die st-comfyui-workflows-Extension (extension_settings.comfyui_workflows)
+    const cfg = (extension_settings && extension_settings.comfyui_workflows) || {};
+    const baseUrl = (cfg.base_url || '').replace(/\/$/, '');
+    const workflow = cfg.workflow || '';
+    if (!baseUrl || !workflow) {
+        const msg = `[${extensionName}] ComfyUI Workflows config fehlt — bitte in der "ComfyUI Workflows"-Extension Base-URL + Workflow setzen (extension_settings.comfyui_workflows).`;
+        console.error(msg);
+        try { toastr.error(msg); } catch (_) { /* toastr optional */ }
+        return '';
+    }
+    const url = `${baseUrl}/workflow/${encodeURIComponent(workflow)}`;
+    try {
+        const r = await fetch(url, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: { prompt: String(prompt || '') } }),
+        });
+        if (!r.ok) {
+            const text = await r.text().catch(() => '');
+            console.error(`[${extensionName}] ComfyUI Workflows HTTP ${r.status} ${url} — ${text.slice(0, 200)}`);
+            return '';
+        }
+        const data = await r.json();
+        if (!data.images || !data.images.length) {
+            console.error(`[${extensionName}] ComfyUI Workflows response without images`, data);
+            return '';
+        }
+        // Pro Convention liefert comfyui-api PNG-base64. Wenn der gewaehlte
+        // Workflow ein anderes Format hat (webp/mp4), waere `data.stats`
+        // bzw. ein zukuenftiges `output_format`-Feld die Quelle der MIME.
+        return `data:image/png;base64,${data.images[0]}`;
+    } catch (e) {
+        console.error(`[${extensionName}] ComfyUI Workflows fetch fehlgeschlagen:`, e);
+        return '';
+    }
+}
+
+/**
  * Default extension settings
  * These are used when the extension is first loaded or when settings are missing
  */
 const defaultSettings = {
-    // Image insertion type (disabled by default)
-    insertType: INSERT_TYPE.DISABLED,
-    // Whether to process user messages for <pic> tags (disabled by default)
-    // When enabled, the extension will also generate images from <pic> tags in user messages
-    // (e.g., from Quick Replies or manual user input)
-    processUserMessages: false,
-    // Whether to apply SillyTavern regex transformations before searching for <pic> tags (disabled by default)
-    // When enabled, regex transformations are applied to messages before searching for tags
-    // This is useful if your regex rules transform <pic> tags, but may not be needed in all cases
-    applyRegexTransformations: false,
-    // Whether to use SillyTavern's image viewer in REPLACE mode (enabled by default)
-    // When enabled, images use the full image viewer with zoom, prompt display, and seed regeneration
-    // When disabled, images are inserted as simple <img> tags in the message text
-    replaceModeUseImageViewer: true,
-    // Whether to use multiple separate image viewers (one per <pic> tag) instead of one combined viewer (disabled by default)
-    // When enabled, each <pic> tag is replaced by its own image viewer at that position in the text
-    // When disabled, all images are collected into a single image viewer (current behavior)
-    // Note: Multiple viewers may have compatibility issues with some SillyTavern features
-    useMultipleImageViews: false,
+    // Image insertion type — REPLACE strips the <pic> tag from the rendered
+    // message and shows the generated image in its place (cleanest UX for
+    // Roleplay-Setups). Combined with multi-viewer below, every tag gets its
+    // own inline image at the position of the original tag.
+    insertType: INSERT_TYPE.REPLACE,
+    // Whether to process user messages for <pic> tags
+    // Enabled by default: useful for Quick Replies / manual user input that
+    // include <pic> tags.
+    processUserMessages: true,
+    // Whether to apply SillyTavern regex transformations before searching for <pic> tags
+    // Enabled by default: SillyTavern's regex engine often hides/transforms
+    // <pic> tags before display — running our search through the same pipeline
+    // ensures we still find the tags.
+    applyRegexTransformations: true,
+    // Whether to use SillyTavern's image viewer in REPLACE mode
+    // Disabled by default: simple <img>-tag rendering pairs better with the
+    // multi-viewer setting below (each tag = own inline viewer). Enable this
+    // only when you want a single combined ST swipe-viewer instead.
+    replaceModeUseImageViewer: false,
+    // Whether to use multiple separate image viewers (one per <pic> tag)
+    // Enabled by default: each tag becomes its own inline image at the exact
+    // position in the message text — readable, scrollable, multi-image friendly.
+    useMultipleImageViews: true,
     // Whether to process <pic> tags when messages are edited (enabled by default)
     // When enabled, adding <pic> tags to existing messages via edit will trigger image generation
     processEditedMessages: true,
-    // Maximum number of times images can be generated for a single message (default: 1)
-    // Also determines how many images are generated per <pic> tag
-    // This prevents infinite loops when regex transformations create new <pic> tags
-    // Set to 0 for unlimited (not recommended)
-    maxImageGenerationsPerMessage: 1,
+    // Maximum number of times images can be generated for a single message.
+    // Default 3: allows up to 3 distinct <pic> tags per AI turn before the
+    // loop guard kicks in — sweet spot for most roleplay scenes (intro shot,
+    // detail shot, environment shot) without runaway generation.
+    maxImageGenerationsPerMessage: 3,
     // Prompt injection configuration
     promptInjection: {
         // Whether prompt injection is enabled
@@ -193,6 +254,20 @@ Example (single tag — keep all values inside ONE pair of double quotes):
         // Depth: 0 means add to the end, >0 means insert from the end at the specified position
         depth: 0,
     },
+    // ComfyUI Workflows renderer — optional fallback that bypasses ST's `/sd`
+    // slash-command and posts directly to a self-hosted comfyui-api endpoint.
+    //
+    // Konfiguration (base_url, workflow) wird aus der `st-comfyui-workflows`-
+    // Extension uebernommen (`extension_settings.comfyui_workflows`). Hier nur
+    // der Enable-Toggle damit zwei Stellen NICHT parallel gepflegt werden
+    // muessen.
+    //
+    // enabled: when true, every <pic>-tag generation geht durch unsere
+    // generateViaComfyUiWorkflows() statt durch ST's /sd-Slash-Command.
+    // Default false — vanilla-Setups unangetastet.
+    comfyui_wf: {
+        enabled: false,
+    },
 };
 
 /**
@@ -251,6 +326,16 @@ function updateUI() {
         $('#max_image_generations_per_message').val(
             extension_settings[extensionName].maxImageGenerationsPerMessage || 1, // Default to 1
         );
+        // ComfyUI Workflows block — nur der Toggle. base_url + workflow kommen
+        // aus extension_settings.comfyui_workflows (der `st-comfyui-workflows`-
+        // Extension). Wir zeigen die aktuellen Werte read-only als Hint
+        // damit der User sieht was greift.
+        const cw = extension_settings[extensionName].comfyui_wf || {};
+        $('#comfyui_wf_enabled').prop('checked', cw.enabled === true);
+        const cfg = (extension_settings && extension_settings.comfyui_workflows) || {};
+        const baseUrl = cfg.base_url || '(nicht gesetzt — bitte in der "ComfyUI Workflows"-Extension konfigurieren)';
+        const workflow = cfg.workflow || '(nicht gesetzt)';
+        $('#comfyui_wf_config_hint').text(`Base-URL: ${baseUrl}  ·  Workflow: ${workflow}`);
     }
 }
 
@@ -326,6 +411,16 @@ async function loadSettings() {
         if (extension_settings[extensionName].maxImageGenerationsPerMessage === undefined) {
             extension_settings[extensionName].maxImageGenerationsPerMessage =
                 defaultSettings.maxImageGenerationsPerMessage;
+        }
+
+        // Ensure comfyui_wf sub-object exists (jetzt nur noch `enabled`).
+        // Migration: falls aus einer frueheren Version base_url/workflow
+        // gespeichert sind — die sind harmlos, werden aber nicht mehr
+        // ausgewertet (Source-of-Truth ist extension_settings.comfyui_workflows).
+        if (!extension_settings[extensionName].comfyui_wf) {
+            extension_settings[extensionName].comfyui_wf = { ...defaultSettings.comfyui_wf };
+        } else if (extension_settings[extensionName].comfyui_wf.enabled === undefined) {
+            extension_settings[extensionName].comfyui_wf.enabled = defaultSettings.comfyui_wf.enabled;
         }
     }
 
@@ -448,6 +543,42 @@ async function createSettings(settingsHtml) {
             ? 1
             : value;
         saveSettingsDebounced();
+    });
+
+    // ---------- ComfyUI Workflows renderer handler ----------
+    // Nur der Toggle — base_url und workflow kommen aus der separaten
+    // st-comfyui-workflows-Extension (siehe generateViaComfyUiWorkflows()).
+    $('#comfyui_wf_enabled').on('change', function () {
+        if (!extension_settings[extensionName].comfyui_wf) {
+            extension_settings[extensionName].comfyui_wf = { ...defaultSettings.comfyui_wf };
+        }
+        extension_settings[extensionName].comfyui_wf.enabled = $(this).prop('checked');
+        saveSettingsDebounced();
+        updateUI();   // damit der Hint mit aktuellen Werten frisch gerendert wird
+    });
+
+    // Reset all settings to defaults
+    // - Replaces extension_settings[extensionName] entirely with a deep clone of defaultSettings
+    //   so future mutations don't accidentally bleed into the defaults object.
+    // - Asks for confirmation because regex/prompt customizations are lost.
+    // - Calls updateUI() to re-populate every form field, then saveSettingsDebounced().
+    $('#image_generation_reset_defaults').on('click', function () {
+        // eslint-disable-next-line no-alert
+        if (!confirm('Reset ALL Image Auto Generation settings to their defaults?\n\nThis will overwrite your prompt template, regex and every option.')) {
+            return;
+        }
+        // Deep clone to avoid sharing references with the defaultSettings object
+        const fresh = JSON.parse(JSON.stringify(defaultSettings));
+        for (const key of Object.keys(extension_settings[extensionName])) {
+            delete extension_settings[extensionName][key];
+        }
+        Object.assign(extension_settings[extensionName], fresh);
+        updateUI();
+        saveSettingsDebounced();
+        try {
+            toastr.success('Image Auto Generation: defaults restored.');
+        } catch (_) { /* toastr may be unavailable in some contexts */ }
+        console.log(`[${extensionName}] All settings reset to defaults`);
     });
 
     // Initialize UI with current settings values
@@ -1044,21 +1175,33 @@ async function handleIncomingMessage(messageId) {
                     console.log(`[${extensionName}] Generating ${count} image(s) with prompt: ${task.prompt}`);
 
                     // Generate the image count times
+                    // Routing: wenn cw.enabled, bypass /sd-Slash und call
+                    // direkt unsere comfyui-api. Sonst original-Pfad ueber den
+                    // konfigurierten ST-SD-source. Beide Wege liefern entweder
+                    // einen URL-String (file:// oder /user/images/...) oder
+                    // eine `data:image/...`-URL die der Image-Viewer rendert.
+                    const useCw = !!(extension_settings[extensionName].comfyui_wf &&
+                                          extension_settings[extensionName].comfyui_wf.enabled);
                     for (let i = 0; i < count; i++) {
-                        // Call the Stable Diffusion slash command to generate the image
-                        // @ts-ignore
-                        const result = await SlashCommandParser.commands[
-                            'sd'
-                        ].callback(
-                            {
-                                // quiet: 'true' suppresses toast notifications (except for NEW_MESSAGE mode)
-                                quiet:
-                                    insertType === INSERT_TYPE.NEW_MESSAGE
-                                        ? 'false'
-                                        : 'true',
-                            },
-                            task.prompt,
-                        );
+                        let result;
+                        if (useCw) {
+                            result = await generateViaComfyUiWorkflows(task.prompt);
+                        } else {
+                            // Call the Stable Diffusion slash command to generate the image
+                            // @ts-ignore
+                            result = await SlashCommandParser.commands[
+                                'sd'
+                            ].callback(
+                                {
+                                    // quiet: 'true' suppresses toast notifications (except for NEW_MESSAGE mode)
+                                    quiet:
+                                        insertType === INSERT_TYPE.NEW_MESSAGE
+                                            ? 'false'
+                                            : 'true',
+                                },
+                                task.prompt,
+                            );
+                        }
 
                         if (typeof result === 'string' && result.trim().length > 0) {
                             generatedImages.push({
@@ -1066,7 +1209,7 @@ async function handleIncomingMessage(messageId) {
                                 prompt: task.prompt,
                                 match: task.match,
                             });
-                            console.log(`[${extensionName}] Generated image ${i + 1}/${count} for prompt: ${task.prompt.substring(0, 50)}...`);
+                            console.log(`[${extensionName}] Generated image ${i + 1}/${count} via ${useCw ? 'comfyui_wf' : '/sd'} for prompt: ${task.prompt.substring(0, 50)}...`);
                         }
                     }
                 }

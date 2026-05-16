@@ -15,6 +15,7 @@ import {
     eventSource,
     event_types,
     updateMessageBlock,
+    getRequestHeaders,
 } from '../../../../script.js';
 import { appendMediaToMessage } from '../../../../script.js';
 import { regexFromString } from '../../../utils.js';
@@ -126,9 +127,11 @@ async function generateViaComfyUiWorkflows(prompt) {
     const url = `/api/plugins/st-ext-server-loader/ext/st-comfyui-workflows/workflow/${encodeURIComponent(workflow)}`;
     console.log(`[${extensionName}] ComfyUI Workflows (via ST backend) POST ${url}`, { input });
     try {
+        // getRequestHeaders() setzt X-CSRF-Token + Content-Type — ST's
+        // CSRF-Middleware blockt sonst /api/* POST mit 403 Forbidden.
         const r = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getRequestHeaders(),
             body: JSON.stringify({ input }),
         });
         if (!r.ok) {

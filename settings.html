@@ -39,5 +39,78 @@
             <label for="prompt_injection_depth" class="flex1" data-i18n="Depth">Depth</label>
             <input id="prompt_injection_depth" class="text_pole widthUnset" type="number" min="0" max="100">
         </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="process_user_messages">
+                <span data-i18n="Process User Messages">Process User Messages</span>
+                <input type="checkbox" id="process_user_messages" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, the extension will also process &lt;pic&gt; tags in user messages (e.g., from Quick Replies). Default: disabled.">When enabled, the extension will also process &lt;pic&gt; tags in user messages (e.g., from Quick Replies). Default: disabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="apply_regex_transformations">
+                <span data-i18n="Apply Regex Transformations">Apply Regex Transformations</span>
+                <input type="checkbox" id="apply_regex_transformations" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, SillyTavern regex transformations are applied to messages before searching for &lt;pic&gt; tags. Useful if your regex rules transform tags. Default: disabled.">When enabled, SillyTavern regex transformations are applied to messages before searching for &lt;pic&gt; tags. Useful if your regex rules transform tags. Default: disabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="replace_mode_use_image_viewer">
+                <span data-i18n="Use Image Viewer in Replace Mode">Use Image Viewer in Replace Mode</span>
+                <input type="checkbox" id="replace_mode_use_image_viewer" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration. When disabled, uses simple &lt;img&gt; tags. Default: enabled.">When enabled, REPLACE mode uses SillyTavern's image viewer with zoom, prompt display, and seed regeneration. When disabled, uses simple &lt;img&gt; tags. Default: enabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="use_multiple_image_views">
+                <span data-i18n="Use Multiple Image Viewers">Use Multiple Image Viewers</span>
+                <input type="checkbox" id="use_multiple_image_views" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, each &lt;pic&gt; tag gets its own separate image viewer at that position in the text. When disabled, all images are collected into a single image viewer. Note: Multiple viewers use inline images (click to open), not full SillyTavern image viewer features. Default: disabled.">When enabled, each &lt;pic&gt; tag gets its own separate image viewer at that position in the text. When disabled, all images are collected into a single image viewer. Note: Multiple viewers use inline images (click to open), not full SillyTavern image viewer features. Default: disabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label" for="process_edited_messages">
+                <span data-i18n="Process Edited Messages">Process Edited Messages</span>
+                <input type="checkbox" id="process_edited_messages" class="checkbox">
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, adding &lt;pic&gt; tags to existing messages via edit will automatically trigger image generation. Default: enabled.">When enabled, adding &lt;pic&gt; tags to existing messages via edit will automatically trigger image generation. Default: enabled.</small>
+        </div>
+        <div class="flex-container flexnowrap">
+            <label for="max_image_generations_per_message" class="flex1" data-i18n="Max Image Generations Per Message">Max Image Generations Per Message</label>
+            <input id="max_image_generations_per_message" class="text_pole widthUnset" type="number" min="0" max="20">
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="Maximum number of times images can be generated for a single message (prevents infinite loops). Also determines how many images are generated per &lt;pic&gt; tag. Set to 0 for unlimited (not recommended). Default: 1.">Maximum number of times images can be generated for a single message (prevents infinite loops). Also determines how many images are generated per &lt;pic&gt; tag. Set to 0 for unlimited (not recommended). Default: 1.</small>
+        </div>
+        <hr>
+        <!-- ComfyUI Workflows renderer (optional) -->
+        <div class="flex-container flexnowrap">
+            <label class="checkbox_label flex1">
+                <input id="comfyui_wf_enabled" type="checkbox" />
+                <span data-i18n="Use ComfyUI Workflows renderer (bypasses /sd source)">Use ComfyUI Workflows renderer (bypasses /sd source)</span>
+            </label>
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="When enabled, every <pic>-tag is rendered via the comfyui-api endpoint configured in the separate 'ComfyUI Workflows' extension (settings drawer). Base-URL and Workflow are pulled from there — no duplicate config here. Disabled by default.">When enabled, every &lt;pic&gt;-tag is rendered via the comfyui-api endpoint configured in the separate <b>"ComfyUI Workflows"</b> extension (settings drawer). Base-URL and Workflow are pulled from there — no duplicate config here. Disabled by default.</small>
+        </div>
+        <div class="text_pole_dropdown" style="opacity:0.75;">
+            <small id="comfyui_wf_config_hint">Base-URL: (laedt…)  ·  Workflow: (laedt…)</small>
+        </div>
+        <hr>
+        <div class="flex-container flexnowrap">
+            <input type="button" id="image_generation_reset_defaults" class="menu_button" value="Reset to Defaults" data-i18n="[value]Reset to Defaults" />
+        </div>
+        <div class="text_pole_dropdown">
+            <small data-i18n="Resets ALL Image Auto Generation settings to their default values (including prompt template and regex). Confirmation required.">Resets ALL Image Auto Generation settings to their default values (including prompt template and regex). Confirmation required.</small>
+        </div>
     </div>
-</div> 
+</div>
